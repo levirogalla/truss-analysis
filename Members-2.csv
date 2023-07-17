@@ -1,0 +1,6 @@
+Id,Length (m),Node A,Node B,Type,Section ID,Angle of Rotation (deg),Node A Fixity,Node B Fixity,Node A Rotational Stiffness Y (RyA) (kN-m/rad),Node A Rotational Stiffness Z (RzA) (kN-m/rad),Node B Rotational Stiffness Y (RyB) (kN-m/rad),Node B Rotational Stiffness Z (RzB) (kN-m/rad),Node A Offsets (mm),Node B Offsets (mm),Cable Length [Optional] (m),Tension/Compression Limit (kN),
+1,1.000,4,1,normal_continuous,1,0,FFFFFF,FFFFFF,0,0,0,0,"0,0,0","0,0,0",,0,
+2,1.000,1,2,normal_continuous,1,0,FFFFFF,FFFFFF,0,0,0,0,"0,0,0","0,0,0",,0,
+3,1.000,2,3,normal_continuous,1,0,FFFFFF,FFFFFF,0,0,0,0,"0,0,0","0,0,0",,0,
+4,1.000,3,4,normal_continuous,1,0,FFFFFF,FFFFFF,0,0,0,0,"0,0,0","0,0,0",,0,
+
