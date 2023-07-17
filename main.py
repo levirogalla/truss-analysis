@@ -20,7 +20,7 @@ def quick_tutorial():
     mesh = Mesh()
 
     # download member and node csv from skyciv then pass relative path to function
-    mesh.from_csv("Nodes-2.csv", "Members-2.csv")
+    mesh.from_csv("csv_files/Nodes-2.csv", "csv_files/Members-2.csv")
 
     # pass the prices of members and joints to get cost function
     cost = mesh.get_cost(MEMBER_COST, JOINT_COST)
