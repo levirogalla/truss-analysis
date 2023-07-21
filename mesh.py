@@ -1,8 +1,9 @@
 """Import dataclass."""
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Union
 import numpy as np
 import pandas as pd
+from matplotlib import pyplot as plt
 
 
 @dataclass(unsafe_hash=True, init=False)
@@ -10,28 +11,38 @@ class Joint:
     """Defines a joint."""
 
     def __init__(self, x_coordinate: float, y_coordinate: float):
-        self.x_coordinate = x_coordinate
-        self.y_coordinate = y_coordinate
+        self.__x_coordinate = x_coordinate
+        self.__y_coordinate = y_coordinate
         self.__members: list["Member"] = []
         self.__forces: list["Force"] = []
-        self.__vector = np.array([self.x_coordinate, self.y_coordinate])
+        self.__vector = np.array(
+            [self.__x_coordinate, self.__y_coordinate], dtype=np.float32)
         self.__support: Support.Base = None
 
     def __eq__(self, __value: "Joint") -> bool:
-        if (self.x_coordinate == __value.x_coordinate and self.y_coordinate == __value.y_coordinate):
+        if (self.__x_coordinate == __value.x_coordinate and self.__y_coordinate == __value.y_coordinate):
             return True
         return False
 
-    def __setattr__(self, __name: str, __value: Any) -> None:
-        # to avoid calling these varible during creation when they dont exist yet
-        if len(self.__dict__) == 6:
-            if __name == "x_coordinate":
-                print("Can not change joint attributes")
-            if __name == "y_coordinate":
-                print("Can not change joint attributes")
+    @property
+    def x_coordinate(self):
+        """Get x coordinate of joint."""
+        return self.__x_coordinate
 
-        else:
-            super().__setattr__(__name, __value)
+    @property
+    def y_coordinate(self):
+        """Get y coordinate of joint."""
+        return self.__y_coordinate
+
+    def set_x(self, x_coordinate: float):
+        """Setter for x."""
+        self.__x_coordinate = x_coordinate
+        self.__vector[0] = self.__x_coordinate
+
+    def set_y(self, y_coordinate: float):
+        """Setter for y"""
+        self.__y_coordinate = y_coordinate
+        self.__vector[1] = self.__y_coordinate
 
     def add_support(self, support: "Support.Base") -> None:
         """Add support to joint."""
@@ -62,16 +73,29 @@ class Joint:
         return self.__vector
 
     def __repr__(self) -> str:
-        return f"{self.x_coordinate}, {self.y_coordinate}"
+        return f"({self.x_coordinate}, {self.y_coordinate})"
 
 
-@dataclass(frozen=True)
+@dataclass
 class Member:
+
     """Defines a member."""
     joint_a: Joint
     joint_b: Joint
-    force: float = 0
-    force_type: str = ""
+
+    def __post_init__(self):
+        self.__force: float = 0
+        self.__force_type: str = ""
+
+    def __hash__(self) -> int:
+        return hash(id(self))
+
+    def set_force(self, force, force_type: str):
+        """Set force. "c" for compresive, "t" for tensile."""
+        if force_type not in ["c", "t"]:
+            raise ValueError("Not valid force type.")
+        self.__force = force
+        self.__force_type = force_type
 
     @property
     def len(self) -> float:
@@ -80,25 +104,50 @@ class Member:
         length = np.linalg.norm(diff)
         return length
 
+    def get_force(self):
+        """Get force in the member."""
+        return self.__force
+
+    def get_force_type(self):
+        """Get force type in the member."""
+        return self.__force_type
+
 
 @dataclass(init=False)
 class Force:
     """Defines a force on a joint."""
 
-    def __init__(self, joint: Joint, x_component: float, y_component: float) -> None:
+    def __init__(self, joint: Joint, x_component: float, y_component: float, **kwargs) -> None:
         self.joint = joint
-        self.x_component = x_component
-        self.y_component = y_component
+        self.__x_component = x_component
+        self.__y_component = y_component
         self.__vector = np.array(
-            [self.x_component, self.y_component], dtype=np.float32
+            [self.__x_component, self.__y_component], dtype=np.float32
         )
+        # only for internal use
+        self.__type = "applied"
 
-    def __setattr__(self, __name: str, __value: Any) -> None:
-        super().__setattr__(__name, __value)
+        for key, val in kwargs.items():
+            if key == "force_type":
+                if val == "applied":
+                    self.__type = "applied"
 
-        if len(self.__dict__) == 4:
-            self.__vector[0] = self.x_component
-            self.__vector[1] = self.y_component
+                elif val == "reaction":
+                    self.__type = "reaction"
+
+                else:
+                    raise ValueError(
+                        f"{val} is not a valid argument for force_type. Valid arguments: 'applied', 'reaction'.")
+
+    def set_x(self, value: float):
+        """Set x component."""
+        self.__x_component = value
+        self.__vector[0] = value
+
+    def set_y(self, value: float):
+        """Set y component."""
+        self.__y_component = value
+        self.__vector[1] = value
 
     @property
     def magnitude(self) -> float:
@@ -110,38 +159,89 @@ class Force:
         "Gets vector representation of force."
         return self.__vector
 
+    def get_type(self):
+        return self.__type
+
 
 @dataclass
 class Support:
-    """Defines a support for a joint."""
+    """
+    Defines a support for a joint.
+    Base types: "p"-pin, "r"-roller, "f"-fixed, "t"-track.
+    """
     joint: Joint
-    base: "Base"
+    base: Union["Base", str]
 
-    @dataclass
+    @dataclass(unsafe_hash=True)
     class Base:
-        "Create a base support"
+        """
+        Create a base support.
+        """
         support_force_positve_x: bool
         support_force_negative_x: bool
         support_force_positve_y: bool
         support_force_negative_y: bool
         support_moment: bool
 
+        @staticmethod(unsafe_hash=True)
+        def code_to_base(code: str):
+            """Get support base from code."""
+            codes = {
+                "p": Support.Base(True, True, True, True, False),
+                "f": Support.Base(True, True, True, True, True),
+                "tf": Support.Base(False, False, True, True, True),
+                "tp": Support.Base(False, False, True, True, False),
+                "rp": Support.Base(False, False, True, False, False),
+
+            }
+            try:
+                return codes[code]
+            except KeyError as exc:
+                raise KeyError(f"{code} is not a valid support type.") from exc
+
+        @staticmethod
+        def base_to_code(base: "Support.Base"):
+            """Get code from base."""
+            bases = {
+                Support.Base(True, True, True, True, False): "p",
+                Support.Base(True, True, True, True, True): "f",
+                Support.Base(False, False, True, True, True): "tf",
+                Support.Base(False, False, True, True, False): "tp",
+                Support.Base(False, False, True, False, False): "rp",
+
+            }
+            try:
+                return bases[base]
+            except KeyError as exc:
+                raise KeyError(f"{base} predefined base type.") from exc
+
     def __post_init__(self) -> None:
         self.x_reaction = 0
         self.y_reaction = 0
         self.moment_reaction = 0
 
+        if isinstance(self.base, str):
+            self.base = Support.Base.code_to_base(self.base)
+
 
 class Mesh:
-    """Define a mesh with joints and member"""
+    """
+    Define a mesh with joints and member.
+    Do not delete any thing once its been added e.g. Mesh().forces.pop(index). This is not 
+    supported yet.
+    ONLY ADD STUFF WITH SETTER FUNCTIONS!
+    """
+
+    # keeps track of how many members, idk why i have this
+    member_count = 0
 
     def __init__(self, members: list[Member] = None) -> None:
         self.joints: set[Joint] = set()
-        self.members: list[Member] = list() if members is None else members
+        self.members: dict[Member: int] = dict()
         self.forces: list[Force] = list()
         self.supports: list[Support] = list()
 
-        for member in self.members:
+        for member in members if members is not None else []:
             self.add_member(member)
 
     def print(self) -> None:
@@ -150,7 +250,10 @@ class Mesh:
             print(f"{member.joint_a} ---- {member.joint_b} | {member.len}")
 
     def add_member(self, member: Member) -> None:
-        """Adds a member to instance."""
+        """
+        Adds a member to instance.
+        Will add joints connected to member implictly.
+        """
 
         # adds joints to mesh
         self.joints.add(member.joint_a)
@@ -160,13 +263,20 @@ class Mesh:
         member.joint_a.add_member(member)
         member.joint_b.add_member(member)
 
-        # add member to mesh
-        self.members.append(member)
+        # add member to mesh pointing to its id
+        self.members[member] = self.member_count
+        self.member_count += 1
 
     def add_support(self, support: Support) -> None:
-        """Adds support to mesh."""
+        """
+        Adds support to mesh.
+        Will implicitly add support to joint.
+        """
         if support in self.supports:
             raise ValueError(f"{support} is in the mesh already.")
+
+        if support.joint not in self.joints:
+            raise ValueError(f"{support} joint does not exist in mesh.")
 
         # adds support to joint
         support.joint.add_support(support)
@@ -175,7 +285,10 @@ class Mesh:
         self.supports.append(support)
 
     def apply_force(self, force: Force) -> None:
-        """Applies a force to a joint in the mesh"""
+        """
+        Applies a force to a joint in the mesh.
+        Will apply the force to the joint object implicitly.
+        """
         # check if joint exists
         if force.joint not in self.joints:
             raise ValueError(f"{force.joint} is not in mesh joints.")
@@ -194,6 +307,7 @@ class Mesh:
         return total
 
     def get_joints(self) -> list[Joint]:
+        """Returns joints"""
         return self.joints
 
     def get_cost(self, member_cost: float, joint_cost: float) -> float:
@@ -223,30 +337,166 @@ class Mesh:
             member = Member(joint_a, joint_b)
             self.add_member(member)
 
-    def solve_supports(self):
-        """Solve support reactions on mesh."""
-        # move all forces to a point, picks random support joint to transfer to
-        base_joint = self.supports[0].joint.get_vector()
-        force_on_base_joint = np.zeros(2, dtype=np.float32)
-        moment_about_base_joint: float = 0
+    def show(self):
+        """Show the visual truss"""
+        joint_size = 5
+        joint_color = "lightblue"
+        member_width = 0.6
+        member_color = "black"
+        force_arrow_scale = 0.1
+        force_arrow_head_width = 0.02
+        applied_force_arrow_color = "darkblue"
+        reaction_force_arrow_color = "darkred"
+        support_size = joint_size*2
+        support_shift = joint_size*0.007
+        support_color = "red"
+
+        for support in self.supports:
+            plt.plot(support.joint.x_coordinate,
+                     support.joint.y_coordinate-support_shift,
+                     "^", markersize=support_size, color=support_color)
+
+        for member in self.members:
+            x_values = [member.joint_a.x_coordinate,
+                        member.joint_b.x_coordinate]
+            y_values = [member.joint_a.y_coordinate,
+                        member.joint_b.y_coordinate]
+            plt.plot(x_values, y_values, 'o',
+                     linestyle="-", color=member_color,
+                     markerfacecolor=joint_color,
+                     markeredgewidth=0.2,
+                     markersize=joint_size,
+                     linewidth=member_width
+                     )
 
         for force in self.forces:
+            plt.arrow(force.joint.x_coordinate, force.joint.y_coordinate,
+                      force.get_vector()[0]*force_arrow_scale,
+                      force.get_vector()[1]*force_arrow_scale,
+                      head_width=force_arrow_head_width,
+                      color=(applied_force_arrow_color if force.get_type()
+                             == "applied" else reaction_force_arrow_color)
+                      )
+
+        plt.show()
+    # assume right and up and all moments are positive
+
+    def solve_supports(self, print_reactions: bool = False):
+        """Solve support reactions on mesh."""
+
+        # calculate total force
+        force_on_base_joint = np.zeros(2, dtype=np.float32)
+        for force in self.forces:
             force_vector = force.get_vector()
-            force_joint_vector = force.joint.get_vector()
             force_on_base_joint += force_vector
 
-            distance_vector = force_joint_vector - base_joint
-            moment = np.cross(force_vector, distance_vector)
-            moment_about_base_joint += moment
+        # +2 for the two force equilbrium equations
+        num_of_equations = (len(self.supports)+2)
 
-        print(force_on_base_joint)
-        print(moment_about_base_joint)
+        # calculates number of variables/columns which is the number of supports *3 for x component forces, y
+        # component forces and supported moment
+        num_of_variables = len(self.supports)*3
+
+        # generates support matrix to be populated
+        # row 0 will be x supports
+        # row 1 will be y supports
+        # column # will correspond to index of support in self.supports, even is x component, odd is y component
+        # support_matrix = np.zeros(
+        #     [num_of_equations, num_of_variables], dtype=np.float32)
+        # make it square
+        support_matrix = np.zeros(
+            [num_of_variables, num_of_variables], dtype=np.float32)
+
+        # eg: [
+        # [coefFx1 = 1, coefFx2 = 1,           0,           0,                  0]
+        # [          0,           0, coefFy1 = 1, coefFy2 = 1,                  0]
+        # [ disFx1 = ?,      disFx2,  disFy1 = ?,  disFy2 = 1, supportsMoment = 1]
+        # ]
+
+        # agument vecotr to hold what the matrix should be equated to
+        augment_vector = np.zeros(num_of_variables, dtype=np.float32)
+        augment_vector[0] = -1*force_on_base_joint[0]
+        augment_vector[1] = -1*force_on_base_joint[1]
+
+        # iterate over supports
+        for i, support in enumerate(self.supports):
+            # check to see if the support provides reaction x or y or m forces, negative x or postive x not supported yet
+            if support.base.support_force_negative_x or support.base.support_force_positve_x:
+                # assuming support is providing force in positive x
+                support_matrix[0, i] = 1
+            if support.base.support_force_negative_y or support.base.support_force_positve_y:
+                # assuming support is providing force in posity y
+                support_matrix[1, i + len(self.supports)] = 1
+            if support.base.support_moment:
+                # assuming support is providing positive moment
+                support_matrix[i+2, len(self.supports)*2 + i] = 1
+
+            # initialize base joint to find moment about it
+            base_joint_vector = support.joint.get_vector()
+            moment_about_base_joint: float = 0
+            for force in self.forces:
+                force_joint_vector = force.joint.get_vector()
+                force_vector = force.get_vector()
+                distance_vector = force_joint_vector - base_joint_vector
+                moment = np.cross(distance_vector, force_vector)
+                moment_about_base_joint += moment
+
+            # negative because being moved to other side of equals sign
+            augment_vector[i+2] = -1*moment_about_base_joint
+
+            for j, other_support in enumerate(self.supports):
+                distance_vector = other_support.joint.get_vector() - base_joint_vector
+                x_distance = distance_vector[0]
+                y_distance = distance_vector[1]
+                # assumes support is providing force in the positive x
+                x_force = int(
+                    other_support.base.support_force_negative_x or
+                    other_support.base.support_force_positve_x)
+                # assumes support is providing force in the positive y
+                y_force = int(
+                    other_support.base.support_force_negative_y or
+                    other_support.base.support_force_positve_y)
+
+                support_matrix[i+2, j] = y_distance*x_force
+                support_matrix[i+2, j+len(self.supports)
+                               ] = x_distance*y_force
+
+        reactions = np.linalg.lstsq(
+            support_matrix, augment_vector, rcond=None)[0]
+
+        for i, support in enumerate(self.supports):
+
+            # add force data to support object (may make this hold a force object instead)
+            support.x_reaction = reactions[i]
+            support.y_reaction = reactions[i + len(self.supports)]
+            support.moment_reaction = reactions[i + 2*len(self.supports)]
+
+            # add force data to mesh object (will implicitly add to joint object)
+            force = Force(
+                support.joint, reactions[i],
+                reactions[i + len(self.supports)], force_type="reaction"
+            )
+            self.apply_force(force)
+
+            if print_reactions:
+                print(
+                    f"""
+For support at {support.joint}:
+    x reaction: {support.x_reaction}
+    y reaction: {support.y_reaction}
+    moment reaction: {support.moment_reaction}""")
 
     def solve(self):
         """Solve for internal forces in mesh."""
-
         # loop through every joint in mesh and make equation for
-        for joint in self.joints:
-            pass
 
-        pass
+        # ever member has an x component and y component
+        num_of_variable = len(self.members)*2
+
+        # finds the max number of equations, case where every node is connected
+        max_num_of_equations = len(self.members)*len(self.joints)
+
+        forces_matrix = np.zeros(
+            [max_num_of_equations, num_of_variable], dtype=np.float32)
+        for joint in self.member_count:
+            pass
