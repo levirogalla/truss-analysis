@@ -1,9 +1,10 @@
 """Import dataclass."""
 from dataclasses import dataclass
-from typing import Any, Union
+from typing import Union
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
+from support_markers import TF, TP, RP, P, F
 
 
 @dataclass(unsafe_hash=True, init=False)
@@ -160,6 +161,7 @@ class Force:
         return self.__vector
 
     def get_type(self):
+        """Returns force type: tension or compresion."""
         return self.__type
 
 
@@ -183,7 +185,7 @@ class Support:
         support_force_negative_y: bool
         support_moment: bool
 
-        @staticmethod(unsafe_hash=True)
+        @staticmethod
         def code_to_base(code: str):
             """Get support base from code."""
             codes = {
@@ -212,8 +214,8 @@ class Support:
             }
             try:
                 return bases[base]
-            except KeyError as exc:
-                raise KeyError(f"{base} predefined base type.") from exc
+            except KeyError:
+                return "custom"
 
     def __post_init__(self) -> None:
         self.x_reaction = 0
@@ -323,7 +325,7 @@ class Mesh:
         return cost
 
     def from_csv(self, path_to_node_csv: str, path_to_member_csv: str):
-        """Import nodes and meshes from csv."""
+        """Import nodes and meshes from csv. Only supports skyciv format."""
         node_file = pd.read_csv(path_to_node_csv, index_col="Id")
         member_file = pd.read_csv(path_to_member_csv, index_col="Id")
 
@@ -341,20 +343,37 @@ class Mesh:
         """Show the visual truss"""
         joint_size = 5
         joint_color = "lightblue"
+
         member_width = 0.6
         member_color = "black"
+
         force_arrow_scale = 0.1
-        force_arrow_head_width = 0.02
+        force_arrow_head_width = 0.01
         applied_force_arrow_color = "darkblue"
         reaction_force_arrow_color = "darkred"
-        support_size = joint_size*2
-        support_shift = joint_size*0.007
+
+        support_size = joint_size*4
         support_color = "red"
+        default_support_marker = "D"
 
         for support in self.supports:
+            support_marker = default_support_marker
+            support_type = Support.Base.base_to_code(support.base)
+            if support_type == "p":
+                support_marker = P
+            if support_type == "f":
+                support_marker = F
+            if support_type == "rp":
+                support_marker = RP
+            if support_type == "tp":
+                support_marker = TP
+            if support_type == "tf":
+                support_marker = TF
+
             plt.plot(support.joint.x_coordinate,
-                     support.joint.y_coordinate-support_shift,
-                     "^", markersize=support_size, color=support_color)
+                     support.joint.y_coordinate,
+                     marker=support_marker, markersize=support_size,
+                     color=support_color)
 
         for member in self.members:
             x_values = [member.joint_a.x_coordinate,
