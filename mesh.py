@@ -1,7 +1,6 @@
 """Import dataclass."""
 from dataclasses import dataclass
 from typing import Union
-import numpy as np
 import torch
 import pandas as pd
 from matplotlib import pyplot as plt
@@ -50,7 +49,8 @@ class Joint:
         """Add support to joint."""
         self.__support = support
 
-    def get_support(self) -> "Support.Base":
+    @property
+    def support(self) -> "Support.Base":
         """Get support on joint."""
         return self.__support
 
@@ -58,7 +58,8 @@ class Joint:
         """Adds a member to joint."""
         self.__members.append(member)
 
-    def get_members(self) -> list["Member"]:
+    @property
+    def members(self) -> list["Member"]:
         """Get members attached to joint."""
         return self.__members
 
@@ -66,11 +67,13 @@ class Joint:
         """Adds force to joint."""
         self.__forces.append(force)
 
-    def get_forces(self) -> list["Force"]:
+    @property
+    def forces(self) -> list["Force"]:
         """Get forces on a joint."""
         return self.__forces
 
-    def get_vector(self):
+    @property
+    def vector(self):
         """Gets joint position in vector representation."""
         return self.__vector
 
@@ -102,15 +105,17 @@ class Member:
     @property
     def len(self) -> float:
         "Returns length of member."
-        diff = self.joint_a.get_vector() - self.joint_b.get_vector()
+        diff = self.joint_a.vector - self.joint_b.vector
         length = torch.norm(diff)
         return length
 
-    def get_force(self):
+    @property
+    def force(self):
         """Get force in the member."""
         return self.__force
 
-    def get_force_type(self):
+    @property
+    def force_type(self):
         """Get force type in the member."""
         return self.__force_type
 
@@ -120,7 +125,7 @@ class Force:
     """Defines a force on a joint."""
 
     def __init__(self, joint: Joint, x_component: float, y_component: float, **kwargs) -> None:
-        self.joint = joint
+        self.__joint = joint
         self.__x_component = x_component
         self.__y_component = y_component
         self.__vector = torch.tensor(
@@ -140,6 +145,10 @@ class Force:
                     raise ValueError(
                         f"{val} is not a valid argument for force_type. Valid arguments: 'applied', 'reaction'.")
 
+    @property
+    def joint(self):
+        return self.__joint
+
     def set_x(self, value: float):
         """Set x component."""
         self.__x_component = value
@@ -156,11 +165,13 @@ class Force:
         mag = torch.norm(self.__vector)
         return mag
 
-    def get_vector(self):
+    @property
+    def vector(self):
         "Gets vector representation of force."
         return self.__vector
 
-    def get_type(self):
+    @property
+    def type(self):
         """Returns force type: tension or compresion."""
         return self.__type
 
@@ -234,21 +245,19 @@ class Mesh:
     ONLY ADD STUFF WITH SETTER FUNCTIONS!
     """
 
-    # keeps track of how many members, idk why i have this
-    member_count = 0
-
     def __init__(self, members: list[Member] = None) -> None:
-        self.joints: set[Joint] = set()
-        self.members: dict[Member: int] = dict()
-        self.forces: list[Force] = list()
-        self.supports: list[Support] = list()
+        self.__joints: set[Joint] = set()
+        self.__members: dict[Member: int] = dict()
+        self.__member_count: int = 0
+        self.__forces: list[Force] = list()
+        self.__supports: list[Support] = list()
 
         for member in members if members is not None else []:
             self.add_member(member)
 
     def print(self) -> None:
         """Prints mesh to terminal."""
-        for member in self.members:
+        for member in self.__members:
             print(f"{member.joint_a} ---- {member.joint_b} | {member.len}")
 
     def add_member(self, member: Member) -> None:
@@ -258,33 +267,41 @@ class Mesh:
         """
 
         # adds joints to mesh
-        self.joints.add(member.joint_a)
-        self.joints.add(member.joint_b)
+        self.__joints.add(member.joint_a)
+        self.__joints.add(member.joint_b)
 
         # adds member to joints
         member.joint_a.add_member(member)
         member.joint_b.add_member(member)
 
-        # add member to mesh pointing to its id
-        self.members[member] = self.member_count
-        self.member_count += 1
+        # add member to mesh pointing to its id, needed for indexing internal forces matrix
+        self.__members[member] = self.__member_count
+        self.__member_count += 1
+
+    @property
+    def supports(self):
+        return self.__supports
 
     def add_support(self, support: Support) -> None:
         """
         Adds support to mesh.
         Will implicitly add support to joint.
         """
-        if support in self.supports:
+        if support in self.__supports:
             raise ValueError(f"{support} is in the mesh already.")
 
-        if support.joint not in self.joints:
+        if support.joint not in self.__joints:
             raise ValueError(f"{support} joint does not exist in mesh.")
 
         # adds support to joint
         support.joint.add_support(support)
 
         # add support to mesh
-        self.supports.append(support)
+        self.__supports.append(support)
+
+    @property
+    def forces(self):
+        return self.__forces
 
     def apply_force(self, force: Force) -> None:
         """
@@ -292,25 +309,26 @@ class Mesh:
         Will apply the force to the joint object implicitly.
         """
         # check if joint exists
-        if force.joint not in self.joints:
+        if force.joint not in self.__joints:
             raise ValueError(f"{force.joint} is not in mesh joints.")
 
         # adds force to joint
         force.joint.apply_force(force)
 
         # adds force to mesh
-        self.forces.append(force)
+        self.__forces.append(force)
 
     def get_total_length(self) -> float:
         """Returns sum of the lenths of the member in the mesh."""
         total = 0
-        for member in self.members:
+        for member in self.__members:
             total += member.len
         return total
 
-    def get_joints(self) -> list[Joint]:
+    @property
+    def joints(self) -> list[Joint]:
         """Returns joints"""
-        return self.joints
+        return self.__joints
 
     def get_cost(self, member_cost: float, joint_cost: float) -> float:
         """
@@ -319,7 +337,7 @@ class Mesh:
         joint_cost: cost unit per joint.
         """
         cost = 0
-        cost += (len(self.joints) * joint_cost)
+        cost += (len(self.__joints) * joint_cost)
         cost += (self.get_total_length() * member_cost)
 
         return cost
@@ -356,7 +374,7 @@ class Mesh:
         support_color = "red"
         default_support_marker = "D"
 
-        for support in self.supports:
+        for support in self.__supports:
             support_marker = default_support_marker
             support_type = Support.Base.base_to_code(support.base)
             if support_type == "p":
@@ -375,7 +393,7 @@ class Mesh:
                      marker=support_marker, markersize=support_size,
                      color=support_color)
 
-        for member in self.members:
+        for member in self.__members:
             x_values = [member.joint_a.x_coordinate,
                         member.joint_b.x_coordinate]
             y_values = [member.joint_a.y_coordinate,
@@ -388,12 +406,12 @@ class Mesh:
                      linewidth=member_width
                      )
 
-        for force in self.forces:
+        for force in self.__forces:
             plt.arrow(force.joint.x_coordinate, force.joint.y_coordinate,
-                      force.get_vector()[0]*force_arrow_scale,
-                      force.get_vector()[1]*force_arrow_scale,
+                      force.vector[0]*force_arrow_scale,
+                      force.vector[1]*force_arrow_scale,
                       head_width=force_arrow_head_width,
-                      color=(applied_force_arrow_color if force.get_type()
+                      color=(applied_force_arrow_color if force.type
                              == "applied" else reaction_force_arrow_color)
                       )
 
@@ -405,16 +423,15 @@ class Mesh:
 
         # calculate total force
         force_on_base_joint = torch.zeros(2, dtype=torch.float32)
-        for force in self.forces:
-            force_vector = force.get_vector()
-            force_on_base_joint += force_vector
+        for force in self.__forces:
+            force_on_base_joint += force.vector
 
         # +2 for the two force equilbrium equations
-        num_of_equations = (len(self.supports)+2)
+        num_of_equations = (len(self.__supports)+2)
 
         # calculates number of variables/columns which is the number of supports *3 for x component forces, y
         # component forces and supported moment
-        num_of_variables = len(self.supports)*3
+        num_of_variables = len(self.__supports)*3
 
         # generates support matrix to be populated
         # row 0 will be x supports
@@ -438,34 +455,33 @@ class Mesh:
         augment_vector[1] = -1*force_on_base_joint[1]
 
         # iterate over supports
-        for i, support in enumerate(self.supports):
+        for i, support in enumerate(self.__supports):
             # check to see if the support provides reaction x or y or m forces, negative x or postive x not supported yet
             if support.base.support_force_negative_x or support.base.support_force_positve_x:
                 # assuming support is providing force in positive x
                 support_matrix[0, i] = 1
             if support.base.support_force_negative_y or support.base.support_force_positve_y:
                 # assuming support is providing force in posity y
-                support_matrix[1, i + len(self.supports)] = 1
+                support_matrix[1, i + len(self.__supports)] = 1
             if support.base.support_moment:
                 # assuming support is providing positive moment
-                support_matrix[i+2, len(self.supports)*2 + i] = 1
+                support_matrix[i+2, len(self.__supports)*2 + i] = 1
 
             # initialize base joint to find moment about it
-            base_joint_vector = support.joint.get_vector()
+            base_joint_vector = support.joint.vector
             moment_about_base_joint: float = 0
-            for force in self.forces:
-                force_joint_vector = force.joint.get_vector()
-                force_vector = force.get_vector()
+            for force in self.__forces:
+                force_joint_vector = force.joint.vector
                 distance_vector = force_joint_vector - base_joint_vector
                 moment = torch.cross(
-                    torch.cat((distance_vector, torch.tensor([0])), dim=0), torch.cat((force_vector, torch.tensor([0])), dim=0))
+                    torch.cat((distance_vector, torch.tensor([0])), dim=0), torch.cat((force.vector, torch.tensor([0])), dim=0))
                 moment_about_base_joint += moment[2]
 
             # negative because being moved to other side of equals sign
             augment_vector[i+2] = -1*moment_about_base_joint
 
-            for j, other_support in enumerate(self.supports):
-                distance_vector = other_support.joint.get_vector() - base_joint_vector
+            for j, other_support in enumerate(self.__supports):
+                distance_vector = other_support.joint.vector - base_joint_vector
                 x_distance = distance_vector[0]
                 y_distance = distance_vector[1]
                 # assumes support is providing force in the positive x
@@ -478,24 +494,24 @@ class Mesh:
                     other_support.base.support_force_positve_y)
 
                 support_matrix[i+2, j] = y_distance*x_force
-                support_matrix[i+2, j+len(self.supports)
+                support_matrix[i+2, j+len(self.__supports)
                                ] = x_distance*y_force
 
         # is this the best way to do it?
         reactions = torch.linalg.lstsq(
             support_matrix, augment_vector).solution
 
-        for i, support in enumerate(self.supports):
+        for i, support in enumerate(self.__supports):
 
             # add force data to support object (may make this hold a force object instead)
             support.x_reaction = reactions[i]
-            support.y_reaction = reactions[i + len(self.supports)]
-            support.moment_reaction = reactions[i + 2*len(self.supports)]
+            support.y_reaction = reactions[i + len(self.__supports)]
+            support.moment_reaction = reactions[i + 2*len(self.__supports)]
 
             # add force data to mesh object (will implicitly add to joint object)
             force = Force(
                 support.joint, reactions[i],
-                reactions[i + len(self.supports)], force_type="reaction"
+                reactions[i + len(self.__supports)], force_type="reaction"
             )
             self.apply_force(force)
 
@@ -512,12 +528,10 @@ For support at {support.joint}:
         # loop through every joint in mesh and make equation for
 
         # ever member has an x component and y component
-        num_of_variable = len(self.members)*2
+        num_of_variable = len(self.__members)*2
 
         # finds the max number of equations, case where every node is connected
-        max_num_of_equations = len(self.members)*len(self.joints)
+        max_num_of_equations = len(self.__members)*len(self.__joints)
 
         forces_matrix = torch.zeros(
             [max_num_of_equations, num_of_variable], dtype=torch.float32)
-        for joint in self.member_count:
-            pass
