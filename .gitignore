@@ -2,3 +2,4 @@ env/
 __pycache__/
 cvs_files/
 test.py
+.vscode

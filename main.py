@@ -75,7 +75,7 @@ def main():
     """Main function."""
 
     mesh = triangle_mesh()
-    mesh.solve_supports()
+    mesh.solve_supports(print_reactions=True)
     mesh.show()
 
 

@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from typing import Union
 import numpy as np
+import torch
 import pandas as pd
 from matplotlib import pyplot as plt
 from support_markers import TF, TP, RP, P, F
@@ -16,8 +17,8 @@ class Joint:
         self.__y_coordinate = y_coordinate
         self.__members: list["Member"] = []
         self.__forces: list["Force"] = []
-        self.__vector = np.array(
-            [self.__x_coordinate, self.__y_coordinate], dtype=np.float32)
+        self.__vector = torch.tensor(
+            [self.__x_coordinate, self.__y_coordinate], dtype=torch.float32)
         self.__support: Support.Base = None
 
     def __eq__(self, __value: "Joint") -> bool:
@@ -102,7 +103,7 @@ class Member:
     def len(self) -> float:
         "Returns length of member."
         diff = self.joint_a.get_vector() - self.joint_b.get_vector()
-        length = np.linalg.norm(diff)
+        length = torch.norm(diff)
         return length
 
     def get_force(self):
@@ -122,9 +123,8 @@ class Force:
         self.joint = joint
         self.__x_component = x_component
         self.__y_component = y_component
-        self.__vector = np.array(
-            [self.__x_component, self.__y_component], dtype=np.float32
-        )
+        self.__vector = torch.tensor(
+            [self.__x_component, self.__y_component], dtype=torch.float32)
         # only for internal use
         self.__type = "applied"
 
@@ -153,7 +153,7 @@ class Force:
     @property
     def magnitude(self) -> float:
         """Return magnitude of force vector."""
-        mag = np.linalg.norm(self.__vector)
+        mag = torch.norm(self.__vector)
         return mag
 
     def get_vector(self):
@@ -404,7 +404,7 @@ class Mesh:
         """Solve support reactions on mesh."""
 
         # calculate total force
-        force_on_base_joint = np.zeros(2, dtype=np.float32)
+        force_on_base_joint = torch.zeros(2, dtype=torch.float32)
         for force in self.forces:
             force_vector = force.get_vector()
             force_on_base_joint += force_vector
@@ -423,8 +423,8 @@ class Mesh:
         # support_matrix = np.zeros(
         #     [num_of_equations, num_of_variables], dtype=np.float32)
         # make it square
-        support_matrix = np.zeros(
-            [num_of_variables, num_of_variables], dtype=np.float32)
+        support_matrix = torch.zeros(
+            [num_of_variables, num_of_variables], dtype=torch.float32)
 
         # eg: [
         # [coefFx1 = 1, coefFx2 = 1,           0,           0,                  0]
@@ -433,7 +433,7 @@ class Mesh:
         # ]
 
         # agument vecotr to hold what the matrix should be equated to
-        augment_vector = np.zeros(num_of_variables, dtype=np.float32)
+        augment_vector = torch.zeros(num_of_variables, dtype=torch.float32)
         augment_vector[0] = -1*force_on_base_joint[0]
         augment_vector[1] = -1*force_on_base_joint[1]
 
@@ -457,8 +457,9 @@ class Mesh:
                 force_joint_vector = force.joint.get_vector()
                 force_vector = force.get_vector()
                 distance_vector = force_joint_vector - base_joint_vector
-                moment = np.cross(distance_vector, force_vector)
-                moment_about_base_joint += moment
+                moment = torch.cross(
+                    torch.cat((distance_vector, torch.tensor([0])), dim=0), torch.cat((force_vector, torch.tensor([0])), dim=0))
+                moment_about_base_joint += moment[2]
 
             # negative because being moved to other side of equals sign
             augment_vector[i+2] = -1*moment_about_base_joint
@@ -480,8 +481,9 @@ class Mesh:
                 support_matrix[i+2, j+len(self.supports)
                                ] = x_distance*y_force
 
-        reactions = np.linalg.lstsq(
-            support_matrix, augment_vector, rcond=None)[0]
+        # is this the best way to do it?
+        reactions = torch.linalg.lstsq(
+            support_matrix, augment_vector).solution
 
         for i, support in enumerate(self.supports):
 
@@ -515,7 +517,7 @@ For support at {support.joint}:
         # finds the max number of equations, case where every node is connected
         max_num_of_equations = len(self.members)*len(self.joints)
 
-        forces_matrix = np.zeros(
-            [max_num_of_equations, num_of_variable], dtype=np.float32)
+        forces_matrix = torch.zeros(
+            [max_num_of_equations, num_of_variable], dtype=torch.float32)
         for joint in self.member_count:
             pass
