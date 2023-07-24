@@ -5,25 +5,31 @@ import torch
 import pandas as pd
 from matplotlib import pyplot as plt
 from support_markers import TF, TP, RP, P, F
+from tqdm import tqdm
 
 
 @dataclass(unsafe_hash=True, init=False)
 class Joint:
     """Defines a joint."""
 
-    def __init__(self, x_coordinate: float, y_coordinate: float):
+    def __init__(self, x_coordinate: float, y_coordinate: float, track_grad=False):
         self.__x_coordinate = x_coordinate
         self.__y_coordinate = y_coordinate
         self.__members: list["Member"] = []
         self.__forces: list["Force"] = []
         self.__vector = torch.tensor(
-            [self.__x_coordinate, self.__y_coordinate], dtype=torch.float32)
+            [self.__x_coordinate, self.__y_coordinate], dtype=torch.float32, requires_grad=track_grad)
         self.__support: Support.Base = None
+        self.__track_grad = track_grad
 
     def __eq__(self, __value: "Joint") -> bool:
         if (self.__x_coordinate == __value.x_coordinate and self.__y_coordinate == __value.y_coordinate):
             return True
         return False
+
+    @property
+    def track_grad(self):
+        return self.__track_grad
 
     @property
     def x_coordinate(self):
@@ -38,12 +44,14 @@ class Joint:
     def set_x(self, x_coordinate: float):
         """Setter for x."""
         self.__x_coordinate = x_coordinate
-        self.__vector[0] = self.__x_coordinate
+        self.__vector = torch.tensor(
+            [x_coordinate, self.__y_coordinate], dtype=torch.float32, requires_grad=self.__track_grad)
 
     def set_y(self, y_coordinate: float):
         """Setter for y"""
         self.__y_coordinate = y_coordinate
-        self.__vector[1] = self.__y_coordinate
+        self.__vector = torch.tensor(
+            [self.__x_coordinate, y_coordinate], dtype=torch.float32, requires_grad=self.__track_grad)
 
     def add_support(self, support: "Support.Base") -> None:
         """Add support to joint."""
@@ -100,7 +108,8 @@ class Member:
     joint_b: Joint
 
     def __post_init__(self):
-        self.__force: float = 0
+        self.__force: torch.Tensor = torch.tensor(
+            0, dtype=torch.float32)
         self.__force_type: str = ""
 
     def __hash__(self) -> int:
@@ -297,7 +306,7 @@ class Mesh:
             print(f"{member.joint_a} ---- {member.joint_b} | {member.len}")
 
     @property
-    def members(self) -> list[Member]:
+    def members(self) -> dict[Member: int]:
         return self.__members
 
     def add_member(self, member: Member) -> None:
@@ -370,16 +379,15 @@ class Mesh:
         """Returns joints"""
         return self.__joints
 
-    def get_cost(self, member_cost: float, joint_cost: float) -> float:
+    def get_cost(self, member_cost: float, joint_cost: float) -> torch.Tensor:
         """
         Returns cost of mesh with parameter provided.
         member_cost: cost unit per distance unit.
         joint_cost: cost unit per joint.
         """
-        cost = 0
+        cost = torch.tensor(0, dtype=torch.float32)
         cost += (len(self.__joints) * joint_cost)
         cost += (self.get_total_length() * member_cost)
-
         return cost
 
     def from_csv(self, path_to_node_csv: str, path_to_member_csv: str):
@@ -413,6 +421,9 @@ class Mesh:
         support_size = joint_size*4
         support_color = "red"
         default_support_marker = "D"
+
+        plt.xlim(-1, 3)
+        plt.ylim(-1, 3)
 
         for support in self.__supports:
             support_marker = default_support_marker
@@ -608,4 +619,108 @@ For support at {support.joint}:
             else:
                 force_type = "t"
 
-            member.set_force(abs(force), force_type)
+            member.set_force(torch.abs(force), force_type)
+
+    def __optimize_member_length(self, joint: Joint, min_member_length=None, max_member_length=None):
+        current_grad = joint.vector.grad.data
+        for member in self.__members:
+            if min_member_length is not None:
+                if member.len < min_member_length:
+                    diffrence = min_member_length - member.len
+                    cost: torch.Tensor = abs(
+                        diffrence*torch.norm(current_grad))*2
+                    cost.backward()
+
+            # max length is not tested yet
+            if max_member_length is not None:
+                if member.len > max_member_length:
+                    diffrence = member.len - max_member_length
+                    cost: torch.Tensor = abs(
+                        diffrence*torch.norm(current_grad))*2
+                    cost.backward()
+
+    def __optimize_member_forces(self, joint: Joint, max_compresive_force=None, max_tensile_force=None):
+        self.solve_supports()
+        self.solve_members()
+        current_grad = joint.vector.grad.data if joint.vector.grad is not None else 1
+        for member in self.__members:
+            if max_compresive_force is not None:
+                if member.force > max_compresive_force and member.force_type == "c":
+                    force = member.force
+                    cost: torch.Tensor = abs(
+                        force - max_compresive_force)*torch.norm(current_grad)*2
+                    cost.backward(retain_graph=True)
+                    # get gradient for each joint
+
+            if max_tensile_force is not None:
+                if member.force > max_tensile_force and member.force_type == "t":
+                    force = member.force
+                    cost: torch.Tensor = abs(
+                        force - max_tensile_force)*torch.norm(current_grad)*2
+                    cost.backward(retain_graph=True)
+
+    def optimize_cost(
+            self,
+            member_cost,
+            joint_cost,
+            lr=0.01,
+            epochs=10,
+            print_cost=True,
+            show_at_epoch=True,
+            min_member_length=None,
+            max_member_length=None,
+            max_tensile_force=None,
+            max_compresive_force=None,
+            progress_bar=True,
+    ):
+        """Will optimize price."""
+
+        if progress_bar:
+            epochs = tqdm(range(epochs))
+        else:
+            epochs = range(epochs)
+
+        for _ in epochs:
+
+            cost: torch.Tensor = self.get_cost(member_cost, joint_cost)
+            cost.backward()
+
+            if print_cost:
+                print(cost)
+            if show_at_epoch:
+                self.show()
+
+            # self.solve_members()
+            for joint in self.__joints:
+                if joint.track_grad == True:
+
+                    # apend min length gradients to cost gradeints
+                    if min_member_length is not None or max_member_length is not None:
+                        self.__optimize_member_length(
+                            joint, min_member_length, max_member_length)
+
+                    if max_compresive_force is not None or max_tensile_force is not None:
+                        self.__optimize_member_forces(
+                            joint, max_compresive_force, max_tensile_force)
+
+                    # get gradient for each joint
+                    grad = joint.vector.grad.data
+
+                    # move joints
+                    new_x = joint.x_coordinate - grad[0]*lr
+                    new_y = joint.y_coordinate - grad[1]*lr
+                    joint.set_x(new_x)
+                    joint.set_y(new_y)
+
+                    # reset all gradeints
+                    grad.zero_()
+
+                    # if max_compresive_force is not None or max_tensile_force is not None:
+                    #     self.__optimize_member_forces(
+                    #         joint, max_compresive_force, max_tensile_force)
+
+            # for joint in self.__joints:
+            #     if joint.track_grad == True:
+            #         if min_member_length is not None or max_member_length is not None:
+            #             self.__optimize_member_length(
+            #                 joint, min_member_length, max_member_length)
