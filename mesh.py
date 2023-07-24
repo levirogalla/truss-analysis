@@ -1,6 +1,6 @@
 """Import dataclass."""
 from dataclasses import dataclass
-from typing import Union
+from typing import Any, Union
 import torch
 import pandas as pd
 from matplotlib import pyplot as plt
@@ -48,6 +48,17 @@ class Joint:
     def add_support(self, support: "Support.Base") -> None:
         """Add support to joint."""
         self.__support = support
+
+    def sum_forces(self, force_type="all"):
+        total_vec = torch.zeros(2, dtype=torch.float32)
+        for force in self.__forces:
+            if force.type == force_type:
+                total_vec += force.vector
+            elif force_type == "all":
+                total_vec += force.vector
+            else:
+                raise ValueError(f"{force_type} is not a valid argument.")
+        return Force(self, total_vec[0], total_vec[1], force_type=(force_type if force_type != "all" else "none"))
 
     @property
     def support(self) -> "Support.Base":
@@ -102,6 +113,16 @@ class Member:
         self.__force = force
         self.__force_type = force_type
 
+    def vector(self, vector_base: Joint = None):
+        """Returns vector from joint a to b unless base is specified."""
+        if vector_base is None or vector_base == self.joint_a:
+            vector = self.joint_b.vector - self.joint_a.vector
+        elif vector_base == self.joint_b:
+            vector = self.joint_a.vector - self.joint_b.vector
+        else:
+            raise ValueError(f"{vector_base} does not belong to this member.")
+        return vector
+
     @property
     def len(self) -> float:
         "Returns length of member."
@@ -141,18 +162,29 @@ class Force:
                 elif val == "reaction":
                     self.__type = "reaction"
 
+                elif val == "none":
+                    self.__type = "none"
+
                 else:
                     raise ValueError(
-                        f"{val} is not a valid argument for force_type. Valid arguments: 'applied', 'reaction'.")
+                        f"{val} is not a valid argument for force_type. Valid arguments: 'applied', 'reaction', 'none'.")
 
     @property
     def joint(self):
         return self.__joint
 
+    @property
+    def x_component(self):
+        return self.__x_component
+
     def set_x(self, value: float):
         """Set x component."""
         self.__x_component = value
         self.__vector[0] = value
+
+    @property
+    def y_component(self):
+        return self.__y_component
 
     def set_y(self, value: float):
         """Set y component."""
@@ -255,10 +287,18 @@ class Mesh:
         for member in members if members is not None else []:
             self.add_member(member)
 
+    def __setattr__(self, __name: str, __value: Any) -> None:
+        super().__setattr__(__name, __value)
+        # print(self.get_cost())
+
     def print(self) -> None:
         """Prints mesh to terminal."""
         for member in self.__members:
             print(f"{member.joint_a} ---- {member.joint_b} | {member.len}")
+
+    @property
+    def members(self) -> list[Member]:
+        return self.__members
 
     def add_member(self, member: Member) -> None:
         """
@@ -279,7 +319,7 @@ class Mesh:
         self.__member_count += 1
 
     @property
-    def supports(self):
+    def supports(self) -> list[Support]:
         return self.__supports
 
     def add_support(self, support: Support) -> None:
@@ -300,7 +340,7 @@ class Mesh:
         self.__supports.append(support)
 
     @property
-    def forces(self):
+    def forces(self) -> list[Force]:
         return self.__forces
 
     def apply_force(self, force: Force) -> None:
@@ -437,11 +477,11 @@ class Mesh:
         # row 0 will be x supports
         # row 1 will be y supports
         # column # will correspond to index of support in self.supports, even is x component, odd is y component
-        # support_matrix = np.zeros(
-        #     [num_of_equations, num_of_variables], dtype=np.float32)
-        # make it square
         support_matrix = torch.zeros(
-            [num_of_variables, num_of_variables], dtype=torch.float32)
+            [num_of_equations, num_of_variables], dtype=torch.float32)
+        # make it square
+        # support_matrix = torch.zeros(
+        #     [num_of_variables, num_of_variables], dtype=torch.float32)
 
         # eg: [
         # [coefFx1 = 1, coefFx2 = 1,           0,           0,                  0]
@@ -450,7 +490,7 @@ class Mesh:
         # ]
 
         # agument vecotr to hold what the matrix should be equated to
-        augment_vector = torch.zeros(num_of_variables, dtype=torch.float32)
+        augment_vector = torch.zeros(num_of_equations, dtype=torch.float32)
         augment_vector[0] = -1*force_on_base_joint[0]
         augment_vector[1] = -1*force_on_base_joint[1]
 
@@ -523,15 +563,49 @@ For support at {support.joint}:
     y reaction: {support.y_reaction}
     moment reaction: {support.moment_reaction}""")
 
-    def solve(self):
+    def solve_members(self):
         """Solve for internal forces in mesh."""
         # loop through every joint in mesh and make equation for
 
         # ever member has an x component and y component
-        num_of_variable = len(self.__members)*2
+        num_of_variable = self.__member_count
 
         # finds the max number of equations, case where every node is connected
-        max_num_of_equations = len(self.__members)*len(self.__joints)
-
+        # times 2 for x and y
+        max_num_of_equations = len(self.__members)*len(self.__joints)*2
         forces_matrix = torch.zeros(
             [max_num_of_equations, num_of_variable], dtype=torch.float32)
+
+        known_forces = torch.zeros(max_num_of_equations, dtype=torch.float32)
+
+        # first have of the rows are x components and second half are y
+        # self.members dict points to the index of
+        r = 0
+        for joint in self.__joints:
+            force_on_joint = joint.sum_forces()
+            for member in joint.members:
+                c = self.__members[member]
+                x_component_ratio = member.vector(
+                    joint)[0]/torch.norm(member.vector())
+                y_component_ratio = member.vector(
+                    joint)[1]/torch.norm(member.vector())
+
+                forces_matrix[r, c] = -1*x_component_ratio
+                forces_matrix[r+1, c] = -1*y_component_ratio
+                # *-1 because moving to other side of equalls
+                known_forces[r] = -1*force_on_joint.x_component
+                known_forces[r+1] = -1*force_on_joint.y_component
+
+            r += 2
+
+        member_forces = torch.linalg.lstsq(
+            forces_matrix, known_forces).solution
+
+        for member, local_id in self.__members.items():
+            force = member_forces[local_id]
+            if force > 0:
+                force_type = "c"
+            else:
+                force_type = "t"
+
+            member.set_force(abs(force), force_type)

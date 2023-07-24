@@ -32,7 +32,7 @@ def triangle_mesh() -> Mesh:
     mem3 = Member(j3, j1)
     support1 = Support(j1, "p")
     support2 = Support(j2, "rp")
-    force1 = Force(j3, 1, -2)
+    force1 = Force(j3, 1, 2)
 
     mesh = Mesh([mem1, mem2, mem3])
     mesh.add_support(support1)
@@ -75,8 +75,18 @@ def main():
     """Main function."""
 
     mesh = triangle_mesh()
-    mesh.solve_supports(print_reactions=True)
-    mesh.show()
+
+    mesh.solve_supports()
+    mesh.solve_members()
+
+    for member in mesh.members:
+        print(
+            f"""
+For {member}:
+    Force type: {member.force_type}
+    Force magnitude: {member.force}
+"""
+        )
 
 
 if __name__ == "__main__":
