@@ -5,6 +5,8 @@ from matplotlib import pyplot as plt
 import time
 import matplotlib.animation as animation
 from matplotlib import style
+import torch
+from tqdm import tqdm
 # define mandotary joints
 JOINT1 = Joint(0, 0)
 JOINT2 = Joint(3.5, 0)
@@ -26,18 +28,41 @@ def triangle_mesh() -> Mesh:
     """
     j1 = Joint(0, 0)
     j2 = Joint(2, 0)
-    j3 = Joint(1, 1)
+    j3 = Joint(0.5, 1, track_grad=True)
+    # j4 = Joint(0, 1, track_grad=True)
     mem1 = Member(j1, j2)
     mem2 = Member(j2, j3)
     mem3 = Member(j3, j1)
+    # mem4 = Member(j4, j3)
+    # mem5 = Member(j4, j1)
     support1 = Support(j1, "p")
     support2 = Support(j2, "rp")
-    force1 = Force(j3, 1, 2)
-
+    force1 = Force(j3, 0, -2)
     mesh = Mesh([mem1, mem2, mem3])
+
     mesh.add_support(support1)
     mesh.add_support(support2)
     mesh.apply_force(force1)
+
+    return mesh
+
+
+def square_mesh() -> Mesh:
+    j1 = Joint(0, 0)
+    j2 = Joint(0.9, 0)
+    j3 = Joint(100, 100, track_grad=True)
+    j4 = Joint(0, 1, track_grad=True)
+
+    bottom = Member(j1, j2)
+    right = Member(j2, j3)
+    top = Member(j3, j4)
+    left = Member(j4, j1)
+    diag = Member(j1, j3)
+
+    mesh = Mesh([bottom, right, top, left, diag])
+    mesh.add_support(Support(j1, "p"))
+    mesh.add_support(Support(j2, "rp"))
+    mesh.apply_force(Force(j3, 1, -1))
 
     return mesh
 
@@ -74,19 +99,41 @@ def quick_tutorial():
 def main():
     """Main function."""
 
-    mesh = triangle_mesh()
+    mesh = square_mesh()
+
+    original_cost = mesh.get_cost(MEMBER_COST, JOINT_COST)
 
     mesh.solve_supports()
     mesh.solve_members()
 
-    for member in mesh.members:
-        print(
-            f"""
-For {member}:
-    Force type: {member.force_type}
-    Force magnitude: {member.force}
-"""
-        )
+    # xlim, ylim = mesh.show()
+    mesh.print_members()
+
+    mesh.optimize_cost(
+        MEMBER_COST,
+        JOINT_COST,
+        0.0001,
+        100000,
+        print_cost=False,
+        show_at_epoch=False,
+        print_mesh=False,
+        min_member_length=1,
+        max_member_length=None,
+        max_tensile_force=None,
+        max_compresive_force=None,
+        update_metrics_interval=1000,
+        update_lr=True,
+        update_lr_agression=0.8
+    )
+
+    mesh.print_members()
+    mesh.solve_supports()
+    mesh.solve_members()
+    print()
+    mesh.print_members()
+    print(f"New cost: {mesh.get_cost(MEMBER_COST, JOINT_COST)}")
+    print(f"Original cost: {original_cost}")
+    mesh.show()
 
 
 if __name__ == "__main__":
