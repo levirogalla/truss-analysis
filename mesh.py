@@ -6,6 +6,8 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from support_markers import TF, TP, RP, P, F
 from tqdm import tqdm
+from matplotlib.animation import FuncAnimation
+import math
 
 
 @dataclass(unsafe_hash=True, init=False)
@@ -445,7 +447,7 @@ class Mesh:
                 member2 = Member(joint_a, joint_b)
                 self.add_member(member2)
 
-    def show(self, xlim=None, ylim=None):
+    def show(self, xlim=None, ylim=None, show=False):
         """Show the visual truss"""
         joint_size = 5
         joint_color = "lightblue"
@@ -538,7 +540,9 @@ class Mesh:
                           )
         current_xlim = plt.xlim()
         current_ylim = plt.ylim()
-        plt.show()
+
+        if show:
+            plt.show()
         return current_xlim, current_ylim
     # assume right and up and all moments are positive
 
@@ -702,7 +706,7 @@ For support at {support.joint}:
                     diffrence = min_member_length - member.len
                     cost: torch.Tensor = abs(
                         diffrence*torch.norm(current_grad))*2
-                    print("cost", cost)
+                    # print("cost", cost)
                     cost.backward()
 
             # max length is not tested yet
@@ -742,10 +746,11 @@ For support at {support.joint}:
             print_mesh=True,
             print_cost=True,
             show_at_epoch=True,
+            show_update_interval=10,
             min_member_length=None,
             max_member_length=None,
             max_tensile_force=None,
-            max_compresive_force=None,
+            max_compresive_force=1,
             progress_bar=True,
             update_metrics_interval=100,
             update_lr=False,
@@ -754,20 +759,43 @@ For support at {support.joint}:
     ):
         """Will optimize price."""
         # put lr as tensor scalar
+
         orignal_lr = lr
         if progress_bar:
             epochs = tqdm(range(epochs))
         else:
             epochs = range(epochs)
 
-        total_cost = torch.tensor(0, dtype=torch.float32)
+        if show_at_epoch:
+            plt.ion()
+            plt.figure()
+
+        total_cost_step = torch.tensor(0, dtype=torch.float32)
+        last_cost = 0
         for epoch in epochs:
+
+            if show_at_epoch and epoch % show_update_interval == 0:
+                self.solve_supports()
+                self.solve_members()
+                plt.clf()
+                self.show()
+                plt.pause(1e-10)
+
             cost: torch.Tensor = self.get_cost(member_cost, joint_cost)
             cost.backward()
 
             if update_lr:
-                lr = self.__update_lr(
-                    lr, update_lr_agression, lowest_lr, orignal_lr, total_cost, epoch, cost)
+                with torch.no_grad():
+                    cost_step = abs(last_cost - cost)
+                    total_cost_step += cost_step
+                    avg_cost_step = total_cost_step/(epoch+1)
+
+                    change_factor = (
+                        cost_step/avg_cost_step
+                    ) ** update_lr_agression
+
+                    new_lr = orignal_lr * change_factor
+                    lr = new_lr if new_lr > lowest_lr else lr
 
             if epoch % update_metrics_interval == 0:
                 with torch.no_grad():
@@ -778,7 +806,8 @@ For support at {support.joint}:
             if print_cost:
                 print(f"Mesh cost: {self.get_cost(member_cost, joint_cost)}")
             if show_at_epoch:
-                self.show()
+                # self.show()
+                pass
 
             # self.solve_members()
             for joint in self.__joints:
@@ -809,12 +838,6 @@ For support at {support.joint}:
                     # reset all gradeints
                     grad.zero_()
 
-    def __update_lr(self, lr, update_lr_agression, lowest_lr, orignal_lr, total_cost, epoch, cost):
-        with torch.no_grad():
-            total_cost += cost
-            # lr = self.__update_lr(lr, cost, total_cost/epoch)
-            avg_cost = total_cost/(epoch+1)
-            change_factor = (cost/avg_cost) ** update_lr_agression
-            new_lr = orignal_lr * change_factor
-            lr = new_lr if new_lr > lowest_lr else lr
-        return lr
+        if show_at_epoch and epoch % show_update_interval == 0:
+            plt.ioff()
+            plt.show()
