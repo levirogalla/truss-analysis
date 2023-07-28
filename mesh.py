@@ -6,8 +6,6 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from support_markers import TF, TP, RP, P, F
 from tqdm import tqdm
-from matplotlib.animation import FuncAnimation
-import math
 
 
 @dataclass(unsafe_hash=True, init=False)
@@ -423,9 +421,9 @@ class Mesh:
         member_cost: cost unit per distance unit.
         joint_cost: cost unit per joint.
         """
-        cost = torch.tensor(0, dtype=torch.float32)
-        cost += (len(self.__joints) * joint_cost)
-        cost += (self.get_total_length() * member_cost)
+        cost = torch.tensor(0, dtype=torch.float32, requires_grad=True)
+        cost = cost + (len(self.__joints) * joint_cost)
+        cost = cost + (self.get_total_length() * member_cost)
         return cost
 
     def from_csv(self, path_to_node_csv: str, path_to_member_csv: str, all_double_members=False):
@@ -703,7 +701,8 @@ For support at {support.joint}:
         for member in self.__members:
             if min_member_length is not None:
                 if member.len < min_member_length:
-                    diffrence = min_member_length - member.len
+                    diffrence = torch.tensor(
+                        min_member_length, dtype=torch.float32, requires_grad=True) - member.len
                     cost: torch.Tensor = abs(
                         diffrence*torch.norm(current_grad))*2
                     # print("cost", cost)
@@ -760,6 +759,10 @@ For support at {support.joint}:
         """Will optimize price."""
         # put lr as tensor scalar
 
+        x_axis = []
+        lr_data = []
+        cost_data = []
+
         orignal_lr = lr
         if progress_bar:
             epochs = tqdm(range(epochs))
@@ -787,6 +790,7 @@ For support at {support.joint}:
             if update_lr:
                 with torch.no_grad():
                     cost_step = abs(last_cost - cost)
+                    last_cost = cost
                     total_cost_step += cost_step
                     avg_cost_step = total_cost_step/(epoch+1)
 
@@ -838,6 +842,16 @@ For support at {support.joint}:
                     # reset all gradeints
                     grad.zero_()
 
+            x_axis.append(epoch)
+            lr_data.append(lr.detach().numpy())
+            cost_data.append(cost.detach().numpy())
+
         if show_at_epoch and epoch % show_update_interval == 0:
             plt.ioff()
             plt.show()
+
+        fig, (ax1, ax2) = plt.subplots(1, 2)
+
+        ax1.plot(x_axis, lr_data)
+        ax2.plot(x_axis, cost_data)
+        plt.show(block=True)
