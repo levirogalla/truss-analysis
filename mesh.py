@@ -6,6 +6,8 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from support_markers import TF, TP, RP, P, F
 from tqdm import tqdm
+from statistics import mean
+from queue import Queue
 
 
 @dataclass(unsafe_hash=True, init=False)
@@ -445,7 +447,7 @@ class Mesh:
                 member2 = Member(joint_a, joint_b)
                 self.add_member(member2)
 
-    def show(self, xlim=None, ylim=None, show=False):
+    def show(self, xlim=None, ylim=None, show=False, ax=plt):
         """Show the visual truss"""
         joint_size = 5
         joint_color = "lightblue"
@@ -466,9 +468,9 @@ class Mesh:
         internal_force_head_width = internal_force_arrow_width*0.01
 
         if xlim is not None:
-            plt.xlim(*xlim)
+            ax.xlim(*xlim)
         if ylim is not None:
-            plt.ylim(*ylim)
+            ax.ylim(*ylim)
 
         with torch.no_grad():
             for support in self.__supports:
@@ -485,25 +487,26 @@ class Mesh:
                 if support_type == "tf":
                     support_marker = TF
 
-                plt.plot(support.joint.x_coordinate,
-                         support.joint.y_coordinate,
-                         marker=support_marker, markersize=support_size,
-                         color=support_color)
+                ax.plot(support.joint.x_coordinate,
+                        support.joint.y_coordinate,
+                        marker=support_marker, markersize=support_size,
+                        color=support_color)
 
             for member in self.__members:
                 x_values = [member.joint_a.x_coordinate,
                             member.joint_b.x_coordinate]
                 y_values = [member.joint_a.y_coordinate,
                             member.joint_b.y_coordinate]
-                plt.plot(x_values, y_values, 'o',
-                         linestyle="-", color=member_color,
-                         markerfacecolor=joint_color,
-                         markeredgewidth=0.2,
-                         markersize=joint_size,
-                         linewidth=member_width
-                         )
 
-                plt.arrow(
+                ax.plot(x_values, y_values, 'o',
+                        linestyle="-", color=member_color,
+                        markerfacecolor=joint_color,
+                        markeredgewidth=0.2,
+                        markersize=joint_size,
+                        linewidth=member_width
+                        )
+
+                ax.arrow(
                     x_values[0], y_values[0],
                     (x_values[1] - x_values[0])/2,
                     (y_values[1] - y_values[0])/2,
@@ -513,7 +516,7 @@ class Mesh:
                     head_width=internal_force_head_width,
                     length_includes_head=True,
                 )
-                plt.arrow(
+                ax.arrow(
                     x_values[1], y_values[1],
                     (x_values[0] - x_values[1])/2,
                     (y_values[0] - y_values[1])/2,
@@ -524,24 +527,24 @@ class Mesh:
                     length_includes_head=True,
                 )
 
-                plt.text(x_values[0] + ((x_values[1] - x_values[0])/2),
-                         y_values[0] + ((y_values[1] - y_values[0])/2),
-                         "{:.3f}".format(member.force))
+                ax.text(x_values[0] + ((x_values[1] - x_values[0])/2),
+                        y_values[0] + ((y_values[1] - y_values[0])/2),
+                        "{:.3f}".format(member.force))
 
             for force in self.__forces:
-                plt.arrow(force.joint.x_coordinate, force.joint.y_coordinate,
-                          force.vector[0]*force_arrow_scale,
-                          force.vector[1]*force_arrow_scale,
-                          head_width=force_arrow_head_width,
-                          color=(applied_force_arrow_color if force.type
-                                 == "applied" else reaction_force_arrow_color)
-                          )
-        current_xlim = plt.xlim()
-        current_ylim = plt.ylim()
+                ax.arrow(force.joint.x_coordinate, force.joint.y_coordinate,
+                         force.vector[0]*force_arrow_scale,
+                         force.vector[1]*force_arrow_scale,
+                         head_width=force_arrow_head_width,
+                         color=(applied_force_arrow_color if force.type
+                                == "applied" else reaction_force_arrow_color)
+                         )
+        # current_xlim = ax.xlim()
+        # current_ylim = ax.ylim()
 
         if show:
             plt.show()
-        return current_xlim, current_ylim
+        # return current_xlim, current_ylim
     # assume right and up and all moments are positive
 
     def solve_supports(self, print_reactions: bool = False):
@@ -745,12 +748,12 @@ For support at {support.joint}:
             print_mesh=True,
             print_cost=True,
             show_at_epoch=True,
-            show_update_interval=10,
             min_member_length=None,
             max_member_length=None,
             max_tensile_force=None,
             max_compresive_force=1,
             progress_bar=True,
+            show_metrics=True,
             update_metrics_interval=100,
             update_lr=False,
             update_lr_agression=1,
@@ -763,55 +766,61 @@ For support at {support.joint}:
         lr_data = []
         cost_data = []
 
+        lr = torch.tensor(lr, dtype=torch.float32)
         orignal_lr = lr
         if progress_bar:
             epochs = tqdm(range(epochs))
         else:
             epochs = range(epochs)
 
+        if show_metrics:
+            f1, (cost_ax, lr_ax) = plt.subplots(1, 2)
+            cost_ax.set_title("Mesh cost")
+            cost_ax.set_xlabel("Epoch")
+
+            lr_ax.set_title("Learning rate")
+            lr_ax.set_xlabel("Epoch")
+
+            f1.suptitle("Metrics")
+
         if show_at_epoch:
+            f2, mesh_ax = plt.subplots(1, 1)
+            f2.suptitle("Mesh")
             plt.ion()
-            plt.figure()
 
         total_cost_step = torch.tensor(0, dtype=torch.float32)
         last_cost = 0
-        for epoch in epochs:
 
-            if show_at_epoch and epoch % show_update_interval == 0:
-                self.solve_supports()
-                self.solve_members()
-                plt.clf()
-                self.show()
-                plt.pause(1e-10)
+        # maybe use queue, how would I get avg tho
+        lr_moving_avg = []
+
+        for epoch in epochs:
 
             cost: torch.Tensor = self.get_cost(member_cost, joint_cost)
             cost.backward()
 
             if update_lr:
                 with torch.no_grad():
+                    # to take the avg of the last 10 learning rates to avoid sudden changes
+                    avg_lr_samples = 500
+
                     cost_step = abs(last_cost - cost)
                     last_cost = cost
-                    total_cost_step += cost_step
-                    avg_cost_step = total_cost_step/(epoch+1)
 
-                    change_factor = (
-                        cost_step/avg_cost_step
-                    ) ** update_lr_agression
+                    change_factor = torch.tanh(
+                        cost_step) ** update_lr_agression
 
                     new_lr = orignal_lr * change_factor
-                    lr = new_lr if new_lr > lowest_lr else lr
+                    lr_moving_avg.append(float(new_lr.detach()))
+
+                    if len(lr_moving_avg) > avg_lr_samples:
+                        lr_moving_avg.pop(0)
+
+                    lr = mean(lr_moving_avg) if new_lr > lowest_lr else lr
 
             if epoch % update_metrics_interval == 0:
                 with torch.no_grad():
                     epochs.set_postfix({"Cost": cost.data})
-
-            if print_mesh:
-                self.print_members()
-            if print_cost:
-                print(f"Mesh cost: {self.get_cost(member_cost, joint_cost)}")
-            if show_at_epoch:
-                # self.show()
-                pass
 
             # self.solve_members()
             for joint in self.__joints:
@@ -842,16 +851,27 @@ For support at {support.joint}:
                     # reset all gradeints
                     grad.zero_()
 
-            x_axis.append(epoch)
-            lr_data.append(lr.detach().numpy())
-            cost_data.append(cost.detach().numpy())
+            if print_mesh:
+                self.print_members()
+            if print_cost:
+                print(f"Mesh cost: {self.get_cost(member_cost, joint_cost)}")
 
-        if show_at_epoch and epoch % show_update_interval == 0:
-            plt.ioff()
-            plt.show()
+            if show_at_epoch and epoch % update_metrics_interval == 0:
+                self.solve_supports()
+                self.solve_members()
+                mesh_ax.cla()
+                self.show(ax=mesh_ax)
 
-        fig, (ax1, ax2) = plt.subplots(1, 2)
+            if show_metrics and epoch % update_metrics_interval == 0:
+                x_axis.append(epoch)
+                lr_data.append(lr)
+                cost_data.append(cost.detach().numpy())
+                lr_ax.cla()
+                lr_ax.plot(x_axis, lr_data)
+                cost_ax.cla()
+                cost_ax.plot(x_axis, cost_data)
 
-        ax1.plot(x_axis, lr_data)
-        ax2.plot(x_axis, cost_data)
-        plt.show(block=True)
+            if (show_metrics or show_at_epoch) and epoch % update_metrics_interval == 0:
+                plt.pause(1e-10)
+
+        plt.ioff()
