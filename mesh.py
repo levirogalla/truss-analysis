@@ -18,11 +18,12 @@ PYTORCH_ENABLE_MPS_FALLBACK = 1
 class Joint:
     """Defines a joint."""
 
+    # rename track_grad to fixed
     def __init__(self, x_coordinate: float, y_coordinate: float, track_grad=False):
         self.__members: list["Member"] = []
         self.__forces: list["Force"] = []
         self.__vector = torch.tensor(
-            [x_coordinate, y_coordinate], dtype=torch.float32, requires_grad=track_grad, device=DEVICE)
+            [x_coordinate, y_coordinate], dtype=torch.float32, requires_grad=True, device=DEVICE)
         self.__support: Support.Base = None
         self.__track_grad = track_grad
 
@@ -775,6 +776,7 @@ For support at {support.joint}:
         for member in self.__members:
             member: Member
             if max_compresive_force is not None:
+
                 if member.force > max_compresive_force and member.force_type == "c":
 
                     # make the change porportional to how much the cost gradient wants to change the joint
@@ -787,7 +789,6 @@ For support at {support.joint}:
                     avg_previous_grad = total_previous_grad / 2
 
                     force = member.force
-                    # print("member force differce", force)
 
                     cost: torch.Tensor = (abs(
                         force - max_compresive_force)*torch.norm(avg_previous_grad))*constriant_agression
