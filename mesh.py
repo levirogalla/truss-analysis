@@ -1,55 +1,82 @@
 """Import dataclass."""
 from dataclasses import dataclass
-from typing import Union
-import numpy as np
+from typing import Any, Union
+import torch
 import pandas as pd
 from matplotlib import pyplot as plt
 from support_markers import TF, TP, RP, P, F
+from tqdm import tqdm
+from statistics import mean
+from queue import Queue
+import pickle
+
+DEVICE = "cpu"
+PYTORCH_ENABLE_MPS_FALLBACK = 1
 
 
 @dataclass(unsafe_hash=True, init=False)
 class Joint:
     """Defines a joint."""
 
-    def __init__(self, x_coordinate: float, y_coordinate: float):
-        self.__x_coordinate = x_coordinate
-        self.__y_coordinate = y_coordinate
+    def __init__(self, x_coordinate: float, y_coordinate: float, track_grad=False):
         self.__members: list["Member"] = []
         self.__forces: list["Force"] = []
-        self.__vector = np.array(
-            [self.__x_coordinate, self.__y_coordinate], dtype=np.float32)
+        self.__vector = torch.tensor(
+            [x_coordinate, y_coordinate], dtype=torch.float32, requires_grad=track_grad, device=DEVICE)
         self.__support: Support.Base = None
+        self.__track_grad = track_grad
 
     def __eq__(self, __value: "Joint") -> bool:
-        if (self.__x_coordinate == __value.x_coordinate and self.__y_coordinate == __value.y_coordinate):
+        if (self.x_coordinate == __value.x_coordinate and self.y_coordinate == __value.y_coordinate):
             return True
         return False
 
     @property
+    def track_grad(self):
+        return self.__track_grad
+
+    @property
     def x_coordinate(self):
         """Get x coordinate of joint."""
-        return self.__x_coordinate
+        return self.__vector[0]
 
     @property
     def y_coordinate(self):
         """Get y coordinate of joint."""
-        return self.__y_coordinate
+        return self.__vector[1]
+
+    def set_cordinates(self, cordinates: list[float, float]):
+        """Set new cordinate for joint."""
+        self.__vector = torch.tensor(
+            cordinates, dtype=torch.float32, requires_grad=self.__track_grad, device=DEVICE)
 
     def set_x(self, x_coordinate: float):
         """Setter for x."""
-        self.__x_coordinate = x_coordinate
-        self.__vector[0] = self.__x_coordinate
+        self.__vector = torch.tensor(
+            [x_coordinate, self.y_coordinate], dtype=torch.float32, requires_grad=self.__track_grad, device=DEVICE)
 
     def set_y(self, y_coordinate: float):
         """Setter for y"""
-        self.__y_coordinate = y_coordinate
-        self.__vector[1] = self.__y_coordinate
+        self.__vector = torch.tensor(
+            [self.x_coordinate, y_coordinate], dtype=torch.float32, requires_grad=self.__track_grad, device=DEVICE)
 
     def add_support(self, support: "Support.Base") -> None:
         """Add support to joint."""
         self.__support = support
 
-    def get_support(self) -> "Support.Base":
+    def sum_forces(self, force_type="all"):
+        total_vec = torch.zeros(2, dtype=torch.float32, device=DEVICE)
+        for force in self.__forces:
+            if force.type == force_type:
+                total_vec += force.vector
+            elif force_type == "all":
+                total_vec += force.vector
+            else:
+                raise ValueError(f"{force_type} is not a valid argument.")
+        return Force(self, total_vec[0], total_vec[1], force_type=(force_type if force_type != "all" else "none"))
+
+    @property
+    def support(self) -> "Support.Base":
         """Get support on joint."""
         return self.__support
 
@@ -57,7 +84,8 @@ class Joint:
         """Adds a member to joint."""
         self.__members.append(member)
 
-    def get_members(self) -> list["Member"]:
+    @property
+    def members(self) -> list["Member"]:
         """Get members attached to joint."""
         return self.__members
 
@@ -65,11 +93,13 @@ class Joint:
         """Adds force to joint."""
         self.__forces.append(force)
 
-    def get_forces(self) -> list["Force"]:
+    @property
+    def forces(self) -> list["Force"]:
         """Get forces on a joint."""
         return self.__forces
 
-    def get_vector(self):
+    @property
+    def vector(self):
         """Gets joint position in vector representation."""
         return self.__vector
 
@@ -85,7 +115,8 @@ class Member:
     joint_b: Joint
 
     def __post_init__(self):
-        self.__force: float = 0
+        self.__force: torch.Tensor = torch.tensor(
+            0, dtype=torch.float32, device=DEVICE)
         self.__force_type: str = ""
 
     def __hash__(self) -> int:
@@ -98,18 +129,30 @@ class Member:
         self.__force = force
         self.__force_type = force_type
 
+    def vector(self, vector_base: Joint = None):
+        """Returns vector from joint a to b unless base is specified."""
+        if vector_base is None or vector_base == self.joint_a:
+            vector = self.joint_b.vector - self.joint_a.vector
+        elif vector_base == self.joint_b:
+            vector = self.joint_a.vector - self.joint_b.vector
+        else:
+            raise ValueError(f"{vector_base} does not belong to this member.")
+        return vector
+
     @property
     def len(self) -> float:
         "Returns length of member."
-        diff = self.joint_a.get_vector() - self.joint_b.get_vector()
-        length = np.linalg.norm(diff)
+        diff = self.joint_a.vector - self.joint_b.vector
+        length = torch.norm(diff)
         return length
 
-    def get_force(self):
+    @property
+    def force(self):
         """Get force in the member."""
         return self.__force
 
-    def get_force_type(self):
+    @property
+    def force_type(self):
         """Get force type in the member."""
         return self.__force_type
 
@@ -119,12 +162,11 @@ class Force:
     """Defines a force on a joint."""
 
     def __init__(self, joint: Joint, x_component: float, y_component: float, **kwargs) -> None:
-        self.joint = joint
+        self.__joint = joint
         self.__x_component = x_component
         self.__y_component = y_component
-        self.__vector = np.array(
-            [self.__x_component, self.__y_component], dtype=np.float32
-        )
+        self.__vector = torch.tensor(
+            [self.__x_component, self.__y_component], dtype=torch.float32, device=DEVICE)
         # only for internal use
         self.__type = "applied"
 
@@ -136,14 +178,39 @@ class Force:
                 elif val == "reaction":
                     self.__type = "reaction"
 
+                elif val == "none":
+                    self.__type = "none"
+
                 else:
                     raise ValueError(
-                        f"{val} is not a valid argument for force_type. Valid arguments: 'applied', 'reaction'.")
+                        f"{val} is not a valid argument for force_type. Valid arguments: 'applied', 'reaction', 'none'.")
+
+    def __eq__(self, __value: "Force") -> bool:
+        if self.x_component == __value.x_component:
+            if self.y_component == __value.y_component:
+                if self.type == __value.type:
+                    return True
+        return False
+
+    def __repr__(self) -> str:
+        return f"Force(joint={self.__joint}, x_mag={self.__x_component}, y_mag={self.__y_component})"
+
+    @property
+    def joint(self):
+        return self.__joint
+
+    @property
+    def x_component(self):
+        return self.__x_component
 
     def set_x(self, value: float):
         """Set x component."""
         self.__x_component = value
         self.__vector[0] = value
+
+    @property
+    def y_component(self):
+        return self.__y_component
 
     def set_y(self, value: float):
         """Set y component."""
@@ -153,15 +220,17 @@ class Force:
     @property
     def magnitude(self) -> float:
         """Return magnitude of force vector."""
-        mag = np.linalg.norm(self.__vector)
+        mag = torch.norm(self.__vector)
         return mag
 
-    def get_vector(self):
+    @property
+    def vector(self):
         "Gets vector representation of force."
         return self.__vector
 
-    def get_type(self):
-        """Returns force type: tension or compresion."""
+    @property
+    def type(self):
+        """Returns force type: applied or reaction."""
         return self.__type
 
 
@@ -234,22 +303,37 @@ class Mesh:
     ONLY ADD STUFF WITH SETTER FUNCTIONS!
     """
 
-    # keeps track of how many members, idk why i have this
-    member_count = 0
-
     def __init__(self, members: list[Member] = None) -> None:
-        self.joints: set[Joint] = set()
-        self.members: dict[Member: int] = dict()
-        self.forces: list[Force] = list()
-        self.supports: list[Support] = list()
+        self.__joints: set[Joint] = set()
+        self.__members: dict[Member: int] = dict()
+        self.__member_count: int = 0
+        self.__forces: list[Force] = list()
+        self.__supports: list[Support] = list()
 
         for member in members if members is not None else []:
             self.add_member(member)
 
-    def print(self) -> None:
+    def __setattr__(self, __name: str, __value: Any) -> None:
+        super().__setattr__(__name, __value)
+        # print(self.get_cost())
+
+    def __hash__(self):
+        return hash(id(self))
+
+    def print_members(self) -> None:
         """Prints mesh to terminal."""
-        for member in self.members:
-            print(f"{member.joint_a} ---- {member.joint_b} | {member.len}")
+        for member in self.__members:
+            print(
+                f"| ({'{:.3f}'.format(member.joint_a.x_coordinate)}, {'{:.3f}'.format(member.joint_a.y_coordinate)}) ---- ({'{:.3f}'.format(member.joint_b.x_coordinate)}, {'{:.3f}'.format(member.joint_b.y_coordinate)}) | Len: {'{:.3f}'.format(member.len)} | Force: {'{:.3f}'.format(member.force)}-{member.force_type} |")
+
+    def parameters(self):
+        for joint in self.__joints:
+            if joint.track_grad:
+                yield joint.vector
+
+    @property
+    def members(self) -> dict[Member: int]:
+        return self.__members
 
     def add_member(self, member: Member) -> None:
         """
@@ -258,73 +342,114 @@ class Mesh:
         """
 
         # adds joints to mesh
-        self.joints.add(member.joint_a)
-        self.joints.add(member.joint_b)
+        self.__joints.add(member.joint_a)
+        self.__joints.add(member.joint_b)
 
         # adds member to joints
         member.joint_a.add_member(member)
         member.joint_b.add_member(member)
 
-        # add member to mesh pointing to its id
-        self.members[member] = self.member_count
-        self.member_count += 1
+        # add member to mesh pointing to its id, needed for indexing internal forces matrix
+        self.__members[member] = self.__member_count
+        self.__member_count += 1
+
+    @property
+    def supports(self) -> list[Support]:
+        return self.__supports
 
     def add_support(self, support: Support) -> None:
         """
         Adds support to mesh.
         Will implicitly add support to joint.
         """
-        if support in self.supports:
+        if support in self.__supports:
             raise ValueError(f"{support} is in the mesh already.")
 
-        if support.joint not in self.joints:
+        if support.joint not in self.__joints:
             raise ValueError(f"{support} joint does not exist in mesh.")
 
         # adds support to joint
         support.joint.add_support(support)
 
         # add support to mesh
-        self.supports.append(support)
+        self.__supports.append(support)
 
-    def apply_force(self, force: Force) -> None:
+    @property
+    def forces(self) -> list[Force]:
+        return self.__forces
+
+    def apply_force(self, force: Force, new_memory_force=False) -> None:
         """
         Applies a force to a joint in the mesh.
         Will apply the force to the joint object implicitly.
         """
         # check if joint exists
-        if force.joint not in self.joints:
-            raise ValueError(f"{force.joint} is not in mesh joints.")
+        if not new_memory_force:
+            if force.joint not in self.__joints:
+                raise ValueError(f"{force.joint} is not in mesh joints.")
 
-        # adds force to joint
-        force.joint.apply_force(force)
+            # adds force to joint
+            force.joint.apply_force(force)
 
-        # adds force to mesh
-        self.forces.append(force)
+            # adds force to mesh
+            self.__forces.append(force)
+
+        # joint that the force is on has a different memory address
+        if new_memory_force:
+            no_joint = True
+            for joint in self.__joints:
+                if joint == force.joint:
+                    no_joint = False
+                    proper_force = Force(
+                        joint, force.x_component, force.y_component
+                    )
+                    joint.apply_force(proper_force)
+                    self.__forces.append(proper_force)
+
+            # if no joint matches are found
+            if no_joint:
+                raise ValueError(f"{force.joint} is not in mesh joints.")
+
+    def clear_reactions(self):
+        indexs_to_remove = []
+        for i, force in enumerate(self.__forces):
+            if force.type == "reaction":
+                indexs_to_remove.insert(0, i)
+
+        for i in indexs_to_remove:
+            force = self.__forces.pop(i)
+            force.joint.forces.remove(force)
+
+        for support in self.__supports:
+            support.x_reaction = 0
+            support.y_reaction = 0
+            support.moment_reaction = 0
 
     def get_total_length(self) -> float:
         """Returns sum of the lenths of the member in the mesh."""
         total = 0
-        for member in self.members:
+        for member in self.__members:
             total += member.len
         return total
 
-    def get_joints(self) -> list[Joint]:
+    @property
+    def joints(self) -> list[Joint]:
         """Returns joints"""
-        return self.joints
+        return self.__joints
 
-    def get_cost(self, member_cost: float, joint_cost: float) -> float:
+    def get_cost(self, member_cost: float, joint_cost: float) -> torch.Tensor:
         """
         Returns cost of mesh with parameter provided.
         member_cost: cost unit per distance unit.
         joint_cost: cost unit per joint.
         """
-        cost = 0
-        cost += (len(self.joints) * joint_cost)
-        cost += (self.get_total_length() * member_cost)
-
+        cost = torch.tensor(0, dtype=torch.float32,
+                            requires_grad=True, device=DEVICE)
+        cost = cost + (len(self.__joints) * joint_cost)
+        cost = cost + (self.get_total_length() * member_cost)
         return cost
 
-    def from_csv(self, path_to_node_csv: str, path_to_member_csv: str):
+    def from_csv(self, path_to_node_csv: str, path_to_member_csv: str, all_double_members=False):
         """Import nodes and meshes from csv. Only supports skyciv format."""
         node_file = pd.read_csv(path_to_node_csv, index_col="Id")
         member_file = pd.read_csv(path_to_member_csv, index_col="Id")
@@ -336,10 +461,14 @@ class Mesh:
                 node_file.loc[node_a, "X Position (m)"], node_file.loc[node_a, "Y Position (m)"])
             joint_b = Joint(
                 node_file.loc[node_b, "X Position (m)"], node_file.loc[node_b, "Y Position (m)"])
-            member = Member(joint_a, joint_b)
-            self.add_member(member)
 
-    def show(self):
+            member1 = Member(joint_a, joint_b)
+            self.add_member(member1)
+            if all_double_members:
+                member2 = Member(joint_a, joint_b)
+                self.add_member(member2)
+
+    def show(self, xlim=None, ylim=None, show=False, ax=plt):
         """Show the visual truss"""
         joint_size = 5
         joint_color = "lightblue"
@@ -356,75 +485,115 @@ class Mesh:
         support_color = "red"
         default_support_marker = "D"
 
-        for support in self.supports:
-            support_marker = default_support_marker
-            support_type = Support.Base.base_to_code(support.base)
-            if support_type == "p":
-                support_marker = P
-            if support_type == "f":
-                support_marker = F
-            if support_type == "rp":
-                support_marker = RP
-            if support_type == "tp":
-                support_marker = TP
-            if support_type == "tf":
-                support_marker = TF
+        internal_force_arrow_width = member_width*1.2
+        internal_force_head_width = internal_force_arrow_width*0.05
 
-            plt.plot(support.joint.x_coordinate,
-                     support.joint.y_coordinate,
-                     marker=support_marker, markersize=support_size,
-                     color=support_color)
+        if xlim is not None:
+            ax.xlim(*xlim)
+        if ylim is not None:
+            ax.ylim(*ylim)
 
-        for member in self.members:
-            x_values = [member.joint_a.x_coordinate,
-                        member.joint_b.x_coordinate]
-            y_values = [member.joint_a.y_coordinate,
-                        member.joint_b.y_coordinate]
-            plt.plot(x_values, y_values, 'o',
-                     linestyle="-", color=member_color,
-                     markerfacecolor=joint_color,
-                     markeredgewidth=0.2,
-                     markersize=joint_size,
-                     linewidth=member_width
-                     )
+        with torch.no_grad():
+            for support in self.__supports:
+                support_marker = default_support_marker
+                support_type = Support.Base.base_to_code(support.base)
+                if support_type == "p":
+                    support_marker = P
+                if support_type == "f":
+                    support_marker = F
+                if support_type == "rp":
+                    support_marker = RP
+                if support_type == "tp":
+                    support_marker = TP
+                if support_type == "tf":
+                    support_marker = TF
 
-        for force in self.forces:
-            plt.arrow(force.joint.x_coordinate, force.joint.y_coordinate,
-                      force.get_vector()[0]*force_arrow_scale,
-                      force.get_vector()[1]*force_arrow_scale,
-                      head_width=force_arrow_head_width,
-                      color=(applied_force_arrow_color if force.get_type()
-                             == "applied" else reaction_force_arrow_color)
-                      )
+                ax.plot(support.joint.x_coordinate.cpu(),
+                        support.joint.y_coordinate.cpu(),
+                        marker=support_marker, markersize=support_size,
+                        color=support_color)
 
-        plt.show()
+            for member in self.__members:
+                member: Member
+                x_values = [member.joint_a.x_coordinate.cpu(),
+                            member.joint_b.x_coordinate.cpu()]
+                y_values = [member.joint_a.y_coordinate.cpu(),
+                            member.joint_b.y_coordinate.cpu()]
+
+                ax.plot(x_values, y_values, 'o',
+                        linestyle="-", color=member_color,
+                        markerfacecolor=joint_color,
+                        markeredgewidth=0.2,
+                        markersize=joint_size,
+                        linewidth=member_width
+                        )
+
+                ax.arrow(
+                    x_values[0], y_values[0],
+                    (x_values[1] - x_values[0])/2,
+                    (y_values[1] - y_values[0])/2,
+                    color=("red" if member.force_type ==
+                           "c" else "blue"),
+                    linewidth=internal_force_arrow_width,
+                    head_width=internal_force_head_width,
+                    length_includes_head=True,
+                )
+                ax.arrow(
+                    x_values[1], y_values[1],
+                    (x_values[0] - x_values[1])/2,
+                    (y_values[0] - y_values[1])/2,
+                    color=("red" if member.force_type ==
+                           "c" else "blue"),
+                    linewidth=internal_force_arrow_width,
+                    head_width=internal_force_head_width,
+                    length_includes_head=True,
+                )
+
+                ax.text(x_values[0] + ((x_values[1] - x_values[0])/2),
+                        y_values[0] + ((y_values[1] - y_values[0])/2),
+                        "{:.3f}".format(member.force))
+
+            for force in self.__forces:
+                ax.arrow(force.joint.x_coordinate.cpu(), force.joint.y_coordinate.cpu(),
+                         force.vector[0].cpu()*force_arrow_scale,
+                         force.vector[1].cpu()*force_arrow_scale,
+                         head_width=force_arrow_head_width,
+                         color=(applied_force_arrow_color if force.type
+                                == "applied" else reaction_force_arrow_color)
+                         )
+        # current_xlim = ax.xlim()
+        # current_ylim = ax.ylim()
+
+        if show:
+            plt.show()
+        # return current_xlim, current_ylim
     # assume right and up and all moments are positive
 
     def solve_supports(self, print_reactions: bool = False):
         """Solve support reactions on mesh."""
 
         # calculate total force
-        force_on_base_joint = np.zeros(2, dtype=np.float32)
-        for force in self.forces:
-            force_vector = force.get_vector()
-            force_on_base_joint += force_vector
+        force_on_base_joint = torch.zeros(
+            2, dtype=torch.float32, device=DEVICE)
+        for force in self.__forces:
+            force_on_base_joint += force.vector
 
         # +2 for the two force equilbrium equations
-        num_of_equations = (len(self.supports)+2)
+        num_of_equations = (len(self.__supports)+2)
 
         # calculates number of variables/columns which is the number of supports *3 for x component forces, y
         # component forces and supported moment
-        num_of_variables = len(self.supports)*3
+        num_of_variables = len(self.__supports)*3
 
         # generates support matrix to be populated
         # row 0 will be x supports
         # row 1 will be y supports
         # column # will correspond to index of support in self.supports, even is x component, odd is y component
-        # support_matrix = np.zeros(
-        #     [num_of_equations, num_of_variables], dtype=np.float32)
+        support_matrix = torch.zeros(
+            [num_of_equations, num_of_variables], dtype=torch.float32, device=DEVICE)
         # make it square
-        support_matrix = np.zeros(
-            [num_of_variables, num_of_variables], dtype=np.float32)
+        # support_matrix = torch.zeros(
+        #     [num_of_variables, num_of_variables], dtype=torch.float32)
 
         # eg: [
         # [coefFx1 = 1, coefFx2 = 1,           0,           0,                  0]
@@ -433,38 +602,39 @@ class Mesh:
         # ]
 
         # agument vecotr to hold what the matrix should be equated to
-        augment_vector = np.zeros(num_of_variables, dtype=np.float32)
+        augment_vector = torch.zeros(
+            num_of_equations, dtype=torch.float32, device=DEVICE)
         augment_vector[0] = -1*force_on_base_joint[0]
         augment_vector[1] = -1*force_on_base_joint[1]
 
         # iterate over supports
-        for i, support in enumerate(self.supports):
+        for i, support in enumerate(self.__supports):
             # check to see if the support provides reaction x or y or m forces, negative x or postive x not supported yet
             if support.base.support_force_negative_x or support.base.support_force_positve_x:
                 # assuming support is providing force in positive x
                 support_matrix[0, i] = 1
             if support.base.support_force_negative_y or support.base.support_force_positve_y:
                 # assuming support is providing force in posity y
-                support_matrix[1, i + len(self.supports)] = 1
+                support_matrix[1, i + len(self.__supports)] = 1
             if support.base.support_moment:
                 # assuming support is providing positive moment
-                support_matrix[i+2, len(self.supports)*2 + i] = 1
+                support_matrix[i+2, len(self.__supports)*2 + i] = 1
 
             # initialize base joint to find moment about it
-            base_joint_vector = support.joint.get_vector()
+            base_joint_vector = support.joint.vector
             moment_about_base_joint: float = 0
-            for force in self.forces:
-                force_joint_vector = force.joint.get_vector()
-                force_vector = force.get_vector()
+            for force in self.__forces:
+                force_joint_vector = force.joint.vector
                 distance_vector = force_joint_vector - base_joint_vector
-                moment = np.cross(distance_vector, force_vector)
-                moment_about_base_joint += moment
+                moment = torch.cross(
+                    torch.cat((distance_vector, torch.tensor([0], device=DEVICE)), dim=0), torch.cat((force.vector, torch.tensor([0], device=DEVICE)), dim=0))
+                moment_about_base_joint += moment[2]
 
             # negative because being moved to other side of equals sign
             augment_vector[i+2] = -1*moment_about_base_joint
 
-            for j, other_support in enumerate(self.supports):
-                distance_vector = other_support.joint.get_vector() - base_joint_vector
+            for j, other_support in enumerate(self.__supports):
+                distance_vector = other_support.joint.vector - base_joint_vector
                 x_distance = distance_vector[0]
                 y_distance = distance_vector[1]
                 # assumes support is providing force in the positive x
@@ -477,23 +647,24 @@ class Mesh:
                     other_support.base.support_force_positve_y)
 
                 support_matrix[i+2, j] = y_distance*x_force
-                support_matrix[i+2, j+len(self.supports)
+                support_matrix[i+2, j+len(self.__supports)
                                ] = x_distance*y_force
 
-        reactions = np.linalg.lstsq(
-            support_matrix, augment_vector, rcond=None)[0]
+        # is this the best way to do it?
+        reactions = torch.linalg.lstsq(
+            support_matrix, augment_vector).solution
 
-        for i, support in enumerate(self.supports):
+        for i, support in enumerate(self.__supports):
 
             # add force data to support object (may make this hold a force object instead)
             support.x_reaction = reactions[i]
-            support.y_reaction = reactions[i + len(self.supports)]
-            support.moment_reaction = reactions[i + 2*len(self.supports)]
+            support.y_reaction = reactions[i + len(self.__supports)]
+            support.moment_reaction = reactions[i + 2*len(self.__supports)]
 
             # add force data to mesh object (will implicitly add to joint object)
             force = Force(
                 support.joint, reactions[i],
-                reactions[i + len(self.supports)], force_type="reaction"
+                reactions[i + len(self.__supports)], force_type="reaction"
             )
             self.apply_force(force)
 
@@ -505,17 +676,250 @@ For support at {support.joint}:
     y reaction: {support.y_reaction}
     moment reaction: {support.moment_reaction}""")
 
-    def solve(self):
+    def solve_members(self):
         """Solve for internal forces in mesh."""
         # loop through every joint in mesh and make equation for
 
         # ever member has an x component and y component
-        num_of_variable = len(self.members)*2
+        num_of_variable = self.__member_count
 
         # finds the max number of equations, case where every node is connected
-        max_num_of_equations = len(self.members)*len(self.joints)
+        # times 2 for x and y
+        max_num_of_equations = len(self.__members)*len(self.__joints)*2
+        forces_matrix = torch.zeros(
+            [max_num_of_equations, num_of_variable], dtype=torch.float32, device=DEVICE)
 
-        forces_matrix = np.zeros(
-            [max_num_of_equations, num_of_variable], dtype=np.float32)
-        for joint in self.member_count:
-            pass
+        known_forces = torch.zeros(
+            max_num_of_equations, dtype=torch.float32, device=DEVICE)
+
+        # first have of the rows are x components and second half are y
+        # self.members dict points to the index of
+        r = 0
+        for joint in self.__joints:
+            force_on_joint = joint.sum_forces()
+            for member in joint.members:
+                c = self.__members[member]
+                x_component_ratio = member.vector(
+                    joint)[0]/torch.norm(member.vector())
+                y_component_ratio = member.vector(
+                    joint)[1]/torch.norm(member.vector())
+
+                forces_matrix[r, c] = -1*x_component_ratio
+                forces_matrix[r+1, c] = -1*y_component_ratio
+                # *-1 because moving to other side of equalls
+                known_forces[r] = -1*force_on_joint.x_component
+                known_forces[r+1] = -1*force_on_joint.y_component
+
+            r += 2
+
+        member_forces = torch.linalg.lstsq(
+            forces_matrix, known_forces).solution
+
+        for member, local_id in self.__members.items():
+            force = member_forces[local_id]
+            if force > 0:
+                force_type = "c"
+            else:
+                force_type = "t"
+
+            member.set_force(torch.abs(force), force_type)
+
+    def __optimize_member_length(self, constriant_agression, min_member_length=None, max_member_length=None):
+        member: Member
+        for member in self.__members:
+            if min_member_length is not None:
+                if member.len < min_member_length:
+
+                    # make the change porportional to how much the cost gradient wants to change the joint
+                    total_previous_grad = torch.zeros(
+                        2, dtype=torch.float32, device=DEVICE)
+                    if member.joint_a.vector.grad is not None:
+                        total_previous_grad = total_previous_grad + member.joint_a.vector.grad.data
+                    if member.joint_b.vector.grad is not None:
+                        total_previous_grad = total_previous_grad + member.joint_b.vector.grad.data
+                    avg_previous_grad = total_previous_grad / 2
+
+                    diffrence = torch.tensor(
+                        min_member_length, dtype=torch.float32, requires_grad=True, device=DEVICE) - member.len
+
+                    # print("member len differce", diffrence)
+
+                    cost: torch.Tensor = abs(
+                        diffrence*torch.norm(avg_previous_grad))*constriant_agression
+
+                    # print("member len cost", cost)
+
+                    # print("cost", cost)
+                    cost.backward()
+
+            # max length is not tested yet
+            if max_member_length is not None:
+                if member.len > max_member_length:
+
+                    # make the change porportional to how much the cost gradient wants to change the joint
+                    total_previous_grad = torch.zeros(
+                        2, dtype=torch.float32, device=DEVICE)
+                    if member.joint_a.vector.grad is not None:
+                        total_previous_grad = total_previous_grad + member.joint_a.vector.grad.data
+                    if member.joint_b.vector.grad is not None:
+                        total_previous_grad = total_previous_grad + member.joint_b.vector.grad.data
+                    avg_previous_grad = total_previous_grad / 2
+
+                    diffrence = member.len - max_member_length
+                    cost: torch.Tensor = abs(
+                        diffrence*torch.norm(avg_previous_grad))*constriant_agression
+                    cost.backward()
+
+    def __optimize_member_forces(self, constriant_agression, max_compresive_force=None, max_tensile_force=None):
+
+        for member in self.__members:
+            member: Member
+            if max_compresive_force is not None:
+                if member.force > max_compresive_force and member.force_type == "c":
+
+                    # make the change porportional to how much the cost gradient wants to change the joint
+                    total_previous_grad = torch.zeros(
+                        2, dtype=torch.float32, device=DEVICE)
+                    if member.joint_a.vector.grad is not None:
+                        total_previous_grad = total_previous_grad + member.joint_a.vector.grad.data
+                    if member.joint_b.vector.grad is not None:
+                        total_previous_grad = total_previous_grad + member.joint_b.vector.grad.data
+                    avg_previous_grad = total_previous_grad / 2
+
+                    force = member.force
+                    # print("member force differce", force)
+
+                    cost: torch.Tensor = (abs(
+                        force - max_compresive_force)*torch.norm(avg_previous_grad))*constriant_agression
+
+                    # print("member force cost", cost)
+
+                    cost.backward(retain_graph=True)
+                    # get gradient for each joint
+
+            if max_tensile_force is not None:
+                if member.force > max_tensile_force and member.force_type == "t":
+
+                    # make the change porportional to how much the cost gradient wants to change the joint
+                    total_previous_grad = torch.zeros(
+                        2, dtype=torch.float32, device=DEVICE)
+                    if member.joint_a.vector.grad is not None:
+                        total_previous_grad = total_previous_grad + member.joint_a.vector.grad.data
+                    if member.joint_b.vector.grad is not None:
+                        total_previous_grad = total_previous_grad + member.joint_b.vector.grad.data
+                    avg_previous_grad = total_previous_grad / 2
+
+                    force = member.force
+                    cost: torch.Tensor = (abs(
+                        force - max_tensile_force)*torch.norm(avg_previous_grad))*constriant_agression
+                    cost.backward(retain_graph=True)
+
+    def optimize_cost(
+            self,
+            member_cost,
+            joint_cost,
+            lr=0.01,
+            epochs=10,
+            optimizer: torch.optim = torch.optim.SGD,
+            print_mesh=True,
+            show_at_epoch=True,
+            min_member_length=None,
+            max_member_length=None,
+            max_tensile_force=None,
+            max_compresive_force=1,
+            constriant_agression=10,
+            progress_bar=True,
+            show_metrics=True,
+            update_metrics_interval=100,
+
+    ):
+        """Will optimize price."""
+
+        # set up metrics data points
+        x_axis = []
+        lr_data = []
+        cost_data = []
+
+        # set up progress bar
+        if progress_bar:
+            epochs = tqdm(range(epochs))
+        else:
+            epochs = range(epochs)
+
+        # set up plots
+        if show_metrics:
+            f1, (cost_ax, lr_ax) = plt.subplots(2, 1)
+            cost_ax.set_title("Mesh cost")
+            cost_ax.set_xlabel("Epoch", fontsize=16)
+
+            lr_ax.set_title("Learning rate", fontsize=16)
+            lr_ax.set_xlabel("Epoch")
+
+            f1.suptitle("Metrics")
+
+        # set up mesh plot
+        if show_at_epoch:
+            f2, mesh_ax = plt.subplots(1, 1)
+            f2.suptitle("Mesh")
+
+        if show_metrics or show_at_epoch:
+            plt.ion()
+
+        # set up optimizer
+        optim = optimizer(self.parameters(), lr)
+
+        # training loop
+        for epoch in epochs:
+            # calculate forces and member forces
+            self.clear_reactions()
+            self.solve_supports()
+            self.solve_members()
+
+            # adjust parameters
+            optim.zero_grad()
+            cost: torch.Tensor = self.get_cost(member_cost, joint_cost)
+            cost.backward()
+            self.__optimize_member_forces(
+                constriant_agression, max_compresive_force, max_tensile_force
+            )
+            self.__optimize_member_length(
+                constriant_agression, min_member_length, max_member_length
+            )
+            optim.step()
+
+            # additional
+            if print_mesh:
+                self.print_members()
+
+            # update metrics
+            if epoch % update_metrics_interval == 0:
+                # update the progress bar
+                with torch.no_grad():
+                    epochs.set_postfix({"Cost": cost.data})
+
+                # update the mesh picture
+                if show_at_epoch:
+                    self.solve_supports()
+                    self.solve_members()
+                    mesh_ax.cla()
+                    self.show(ax=mesh_ax)
+
+                # update the metrics
+                if show_metrics:
+                    x_axis.append(epoch)
+                    lr_data.append(lr)
+                    cost_data.append(cost.cpu().detach().numpy())
+                    lr_ax.cla()
+                    lr_ax.plot(x_axis, lr_data)
+                    cost_ax.cla()
+                    cost_ax.plot(x_axis, cost_data)
+
+                if (show_metrics or show_at_epoch):
+                    plt.pause(1e-10)
+
+        if (show_metrics or show_at_epoch):
+            plt.ioff()
+
+    def save(self, name, relative_path="models/"):
+        with open(str(f"{relative_path}{name}"), "wb") as f:
+            pickle.dump(self, f)

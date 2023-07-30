@@ -1,6 +1,6 @@
 # Truss Analysis Package
 
-This package gives functionality to analyse trusses
+This package gives functionality to analyse trusses.
 
 ## How to use
 
