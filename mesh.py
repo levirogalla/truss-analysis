@@ -23,7 +23,7 @@ class Joint:
         self.__members: list["Member"] = []
         self.__forces: list["Force"] = []
         self.__vector = torch.tensor(
-            [x_coordinate, y_coordinate], dtype=torch.float32, requires_grad=True, device=DEVICE)
+            [x_coordinate, y_coordinate], dtype=torch.float32, requires_grad=track_grad, device=DEVICE)
         self.__support: Support.Base = None
         self.__track_grad = track_grad
 
@@ -529,26 +529,47 @@ class Mesh:
                         linewidth=member_width
                         )
 
-                ax.arrow(
-                    x_values[0], y_values[0],
-                    (x_values[1] - x_values[0])/2,
-                    (y_values[1] - y_values[0])/2,
-                    color=("red" if member.force_type ==
-                           "c" else "blue"),
-                    linewidth=internal_force_arrow_width,
-                    head_width=internal_force_head_width,
-                    length_includes_head=True,
-                )
-                ax.arrow(
-                    x_values[1], y_values[1],
-                    (x_values[0] - x_values[1])/2,
-                    (y_values[0] - y_values[1])/2,
-                    color=("red" if member.force_type ==
-                           "c" else "blue"),
-                    linewidth=internal_force_arrow_width,
-                    head_width=internal_force_head_width,
-                    length_includes_head=True,
-                )
+                if member.force_type == "c":
+                    ax.arrow(
+                        x_values[0], y_values[0],
+                        (x_values[1] - x_values[0])/2,
+                        (y_values[1] - y_values[0])/2,
+                        color="red",
+                        linewidth=internal_force_arrow_width,
+                        head_width=internal_force_head_width,
+                        length_includes_head=True,
+                    )
+                    ax.arrow(
+                        x_values[1], y_values[1],
+                        (x_values[0] - x_values[1])/2,
+                        (y_values[0] - y_values[1])/2,
+                        color="red",
+                        linewidth=internal_force_arrow_width,
+                        head_width=internal_force_head_width,
+                        length_includes_head=True,
+                    )
+
+                if member.force_type == "t":
+                    ax.arrow(
+                        (x_values[1] + x_values[0])/2,
+                        (y_values[1] + y_values[0])/2,
+                        (x_values[0] - x_values[1])/2,
+                        (y_values[0] - y_values[1])/2,
+                        color="blue",
+                        linewidth=internal_force_arrow_width,
+                        head_width=internal_force_head_width,
+                        length_includes_head=True,
+                    )
+                    ax.arrow(
+                        (x_values[0] + x_values[1])/2,
+                        (y_values[0] + y_values[1])/2,
+                        -(x_values[0] - x_values[1])/2,
+                        -(y_values[0] - y_values[1])/2,
+                        color="blue",
+                        linewidth=internal_force_arrow_width,
+                        head_width=internal_force_head_width,
+                        length_includes_head=True,
+                    )
 
                 ax.text(x_values[0] + ((x_values[1] - x_values[0])/2),
                         y_values[0] + ((y_values[1] - y_values[0])/2),
@@ -725,94 +746,61 @@ For support at {support.joint}:
 
             member.set_force(torch.abs(force), force_type)
 
-    def __optimize_member_length(self, constriant_agression, min_member_length=None, max_member_length=None):
+    def __optimize_member_length(self, constriant_agression, min_member_length=None, max_member_length=None, propritary_cost=1):
         member: Member
         for member in self.__members:
             if min_member_length is not None:
                 if member.len < min_member_length:
 
-                    # make the change porportional to how much the cost gradient wants to change the joint
-                    total_previous_grad = torch.zeros(
-                        2, dtype=torch.float32, device=DEVICE)
-                    if member.joint_a.vector.grad is not None:
-                        total_previous_grad = total_previous_grad + member.joint_a.vector.grad.data
-                    if member.joint_b.vector.grad is not None:
-                        total_previous_grad = total_previous_grad + member.joint_b.vector.grad.data
-                    avg_previous_grad = total_previous_grad / 2
-
                     diffrence = torch.tensor(
-                        min_member_length, dtype=torch.float32, requires_grad=True, device=DEVICE) - member.len
-
-                    # print("member len differce", diffrence)
+                        min_member_length, dtype=torch.float32, requires_grad=True, device=DEVICE
+                    ) - member.len
 
                     cost: torch.Tensor = abs(
-                        diffrence*torch.norm(avg_previous_grad))*constriant_agression
+                        diffrence*constriant_agression*propritary_cost)
 
-                    # print("member len cost", cost)
-
-                    # print("cost", cost)
                     cost.backward()
 
-            # max length is not tested yet
             if max_member_length is not None:
                 if member.len > max_member_length:
 
-                    # make the change porportional to how much the cost gradient wants to change the joint
-                    total_previous_grad = torch.zeros(
-                        2, dtype=torch.float32, device=DEVICE)
-                    if member.joint_a.vector.grad is not None:
-                        total_previous_grad = total_previous_grad + member.joint_a.vector.grad.data
-                    if member.joint_b.vector.grad is not None:
-                        total_previous_grad = total_previous_grad + member.joint_b.vector.grad.data
-                    avg_previous_grad = total_previous_grad / 2
+                    diffrence = torch.tensor(
+                        min_member_length, dtype=torch.float32, requires_grad=True, device=DEVICE
+                    ) - member.len
 
-                    diffrence = member.len - max_member_length
                     cost: torch.Tensor = abs(
-                        diffrence*torch.norm(avg_previous_grad))*constriant_agression
+                        diffrence*constriant_agression*propritary_cost)
+
                     cost.backward()
 
-    def __optimize_member_forces(self, constriant_agression, max_compresive_force=None, max_tensile_force=None):
+    def __optimize_member_forces(self, constriant_agression, max_compresive_force=None, max_tensile_force=None, propritary_cost=1):
 
         for member in self.__members:
             member: Member
             if max_compresive_force is not None:
-
                 if member.force > max_compresive_force and member.force_type == "c":
 
-                    # make the change porportional to how much the cost gradient wants to change the joint
-                    total_previous_grad = torch.zeros(
-                        2, dtype=torch.float32, device=DEVICE)
-                    if member.joint_a.vector.grad is not None:
-                        total_previous_grad = total_previous_grad + member.joint_a.vector.grad.data
-                    if member.joint_b.vector.grad is not None:
-                        total_previous_grad = total_previous_grad + member.joint_b.vector.grad.data
-                    avg_previous_grad = total_previous_grad / 2
+                    diffrence = member.force - torch.tensor(
+                        max_compresive_force, dtype=torch.float32, requires_grad=True, device=DEVICE
+                    )
 
-                    force = member.force
-
-                    cost: torch.Tensor = (abs(
-                        force - max_compresive_force)*torch.norm(avg_previous_grad))*constriant_agression
-
-                    # print("member force cost", cost)
+                    cost: torch.Tensor = abs(
+                        diffrence*propritary_cost*constriant_agression
+                    )
 
                     cost.backward(retain_graph=True)
-                    # get gradient for each joint
 
             if max_tensile_force is not None:
                 if member.force > max_tensile_force and member.force_type == "t":
 
-                    # make the change porportional to how much the cost gradient wants to change the joint
-                    total_previous_grad = torch.zeros(
-                        2, dtype=torch.float32, device=DEVICE)
-                    if member.joint_a.vector.grad is not None:
-                        total_previous_grad = total_previous_grad + member.joint_a.vector.grad.data
-                    if member.joint_b.vector.grad is not None:
-                        total_previous_grad = total_previous_grad + member.joint_b.vector.grad.data
-                    avg_previous_grad = total_previous_grad / 2
+                    diffrence = member.force - torch.tensor(
+                        max_tensile_force, dtype=torch.float32, requires_grad=True, device=DEVICE
+                    )
 
-                    force = member.force
-                    cost: torch.Tensor = (abs(
-                        force - max_tensile_force)*torch.norm(avg_previous_grad))*constriant_agression
+                    cost: torch.Tensor = abs(
+                        diffrence*propritary_cost*constriant_agression
+                    )
+
                     cost.backward(retain_graph=True)
 
     def optimize_cost(
@@ -868,7 +856,6 @@ For support at {support.joint}:
 
         # set up optimizer
         optim = optimizer(self.parameters(), lr)
-
         # training loop
         for epoch in epochs:
             # calculate forces and member forces
@@ -881,10 +868,10 @@ For support at {support.joint}:
             cost: torch.Tensor = self.get_cost(member_cost, joint_cost)
             cost.backward()
             self.__optimize_member_forces(
-                constriant_agression, max_compresive_force, max_tensile_force
+                constriant_agression, max_compresive_force, max_tensile_force, propritary_cost=cost.detach()
             )
             self.__optimize_member_length(
-                constriant_agression, min_member_length, max_member_length
+                constriant_agression, min_member_length, max_member_length, propritary_cost=cost.detach()
             )
             optim.step()
 
