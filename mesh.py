@@ -11,7 +11,6 @@ from queue import Queue
 import pickle
 
 DEVICE = "cpu"
-PYTORCH_ENABLE_MPS_FALLBACK = 1
 
 
 @dataclass(unsafe_hash=True, init=False)
@@ -321,16 +320,47 @@ class Mesh:
     def __hash__(self):
         return hash(id(self))
 
-    def print_members(self) -> None:
+    def print_members(self, decimal_places=3) -> None:
         """Prints mesh to terminal."""
+        percision = "{:." + str(decimal_places) + "f}"
         for member in self.__members:
             print(
-                f"| ({'{:.3f}'.format(member.joint_a.x_coordinate)}, {'{:.3f}'.format(member.joint_a.y_coordinate)}) ---- ({'{:.3f}'.format(member.joint_b.x_coordinate)}, {'{:.3f}'.format(member.joint_b.y_coordinate)}) | Len: {'{:.3f}'.format(member.len)} | Force: {'{:.3f}'.format(member.force)}-{member.force_type} |")
+                f"| ({percision.format(member.joint_a.x_coordinate)}, {percision.format(member.joint_a.y_coordinate)}) ---- ({percision.format(member.joint_b.x_coordinate)}, {percision.format(member.joint_b.y_coordinate)}) | Len: {percision.format(member.len)} | Force: {percision.format(member.force)}-{member.force_type} |")
 
     def parameters(self):
         for joint in self.__joints:
             if joint.track_grad:
                 yield joint.vector
+
+    def delete_joint(self, joint: Joint) -> None:
+        members_connected_to_joint = [mem for mem in joint.members]
+        post_member_index_reduction = 0
+        for member, index in self.__members.items():
+            member: Member
+            self.__members[member] = index - post_member_index_reduction
+            if member in members_connected_to_joint:
+                post_member_index_reduction += 1
+
+        for member in members_connected_to_joint:
+            self.__members.pop(member)
+
+            if joint == member.joint_a:
+                member.joint_b._Joint__members.remove(member)
+            if joint == member.joint_b:
+                member.joint_a._Joint__members.remove(member)
+
+        for i, force in enumerate(self.__forces):
+            if force.joint == joint:
+                self.__forces.pop(i)
+
+        for i, support in enumerate(self.__supports):
+            if support.joint == joint:
+                self.__supports.pop(i)
+        if post_member_index_reduction == 0:
+            raise ValueError(f"{joint} not found")
+
+        self.__member_count -= 1
+        self.__joints.remove(joint)
 
     @property
     def members(self) -> dict[Member: int]:
@@ -571,6 +601,7 @@ class Mesh:
                         length_includes_head=True,
                     )
 
+                # text for forces
                 ax.text(x_values[0] + ((x_values[1] - x_values[0])/2),
                         y_values[0] + ((y_values[1] - y_values[0])/2),
                         "{:.3f}".format(member.force))
@@ -858,6 +889,11 @@ For support at {support.joint}:
         optim = optimizer(self.parameters(), lr)
         # training loop
         for epoch in epochs:
+
+            if epoch % 10000 == 0:
+                self.print_members(5)
+                self.save(f"final3/epoch{epoch}")
+
             # calculate forces and member forces
             self.clear_reactions()
             self.solve_supports()
@@ -883,7 +919,8 @@ For support at {support.joint}:
             if epoch % update_metrics_interval == 0:
                 # update the progress bar
                 with torch.no_grad():
-                    epochs.set_postfix({"Cost": cost.data})
+                    if progress_bar:
+                        epochs.set_postfix({"Cost": cost.data})
 
                 # update the mesh picture
                 if show_at_epoch:
@@ -907,6 +944,8 @@ For support at {support.joint}:
 
         if (show_metrics or show_at_epoch):
             plt.ioff()
+
+        print("done")
 
     def save(self, name, relative_path="models/"):
         with open(str(f"{relative_path}{name}"), "wb") as f:
