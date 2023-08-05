@@ -3,3 +3,6 @@ __pycache__/
 cvs_files/
 test.py
 .vscode
+.DS_Store
+models/
+trusses/
