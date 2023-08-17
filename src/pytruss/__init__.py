@@ -1,0 +1,2 @@
+"""Pytruss."""
+from mesh import *

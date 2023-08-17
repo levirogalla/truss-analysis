@@ -7,3 +7,5 @@ test.py
 models/
 trusses/
 misc/
+dist/
+*.egg-info/
