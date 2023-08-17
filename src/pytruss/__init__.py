@@ -1,2 +1,2 @@
 """Pytruss."""
-from mesh import *
+from .mesh import *
