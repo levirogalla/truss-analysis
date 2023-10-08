@@ -1,5 +1,5 @@
 """Import mesh classes"""
-from mesh import Mesh, Joint, Member, Support, Force
+from src.pytruss.mesh import Mesh, Joint, Member, Support, Force
 import numpy as np
 from matplotlib import pyplot as plt
 import time
@@ -49,9 +49,9 @@ def triangle_mesh() -> Mesh:
 
 def square_mesh() -> Mesh:
     j1 = Joint(0, 0)
-    j2 = Joint(0.9, 0)
+    j2 = Joint(1, 0)
     j3 = Joint(100, 100, track_grad=True)
-    j4 = Joint(0, 1, track_grad=True)
+    j4 = Joint(0, -30, track_grad=True)
 
     bottom = Member(j1, j2)
     right = Member(j2, j3)
@@ -64,7 +64,7 @@ def square_mesh() -> Mesh:
     mesh.add_support(Support(j2, "rp"))
     mesh.apply_force(Force(j3, 1, -1))
 
-    return mesh
+    return mesh, j3
 
 
 def quick_tutorial():
@@ -99,31 +99,33 @@ def quick_tutorial():
 def main():
     """Main function."""
 
-    mesh = square_mesh()
-
+    mesh, j3 = square_mesh()
+    mesh: Mesh
+    j3: Joint
     original_cost = mesh.get_cost(MEMBER_COST, JOINT_COST)
 
     mesh.solve_supports()
     mesh.solve_members()
-
-    # xlim, ylim = mesh.show()
     mesh.print_members()
+    mesh.show(show=True)
 
     mesh.optimize_cost(
         MEMBER_COST,
         JOINT_COST,
-        0.0001,
+        0.01,
         100000,
-        print_cost=False,
-        show_at_epoch=False,
+        optimizer=torch.optim.Adam,
         print_mesh=False,
+        show_at_epoch=True,
         min_member_length=1,
         max_member_length=None,
         max_tensile_force=None,
         max_compresive_force=None,
-        update_metrics_interval=1000,
-        update_lr=True,
-        update_lr_agression=0.8
+        constriant_agression=1,
+        progress_bar=True,
+        show_metrics=True,
+        update_metrics_interval=50,
+
     )
 
     mesh.print_members()

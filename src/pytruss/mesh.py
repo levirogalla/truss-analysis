@@ -320,6 +320,20 @@ class Mesh:
     def __hash__(self):
         return hash(id(self))
 
+    def __eq__(self, __value: "Mesh"):
+        equal = True
+
+        if self.joints != __value.joints:
+            equal = False
+        elif set(self.supports) != set(__value.joints):
+            equal = False
+        elif set(self.members.values()) != set(__value.members.values()):
+            equal = False
+        elif set(self.forces) != set(__value.forces):
+            equal = False
+
+        return equal
+
     def print_members(self, decimal_places=3) -> None:
         """Prints mesh to terminal."""
         percision = "{:." + str(decimal_places) + "f}"
@@ -890,10 +904,6 @@ For support at {support.joint}:
         # training loop
         for epoch in epochs:
 
-            if epoch % 10000 == 0:
-                self.print_members(5)
-                self.save(f"final3/epoch{epoch}")
-
             # calculate forces and member forces
             self.clear_reactions()
             self.solve_supports()
@@ -947,6 +957,6 @@ For support at {support.joint}:
 
         print("done")
 
-    def save(self, name, relative_path="models/"):
+    def save(self, name, relative_path):
         with open(str(f"{relative_path}{name}"), "wb") as f:
             pickle.dump(self, f)
