@@ -107,7 +107,7 @@ class Joint:
         return f"({self.x_coordinate}, {self.y_coordinate})"
 
 
-@dataclass(unsafe_hash=True)
+@dataclass
 class Member:
 
     """Defines a member."""
@@ -157,7 +157,7 @@ class Member:
         return self.__force_type
 
 
-@dataclass(init=False, unsafe_hash=True)
+@dataclass(init=False)
 class Force:
     """Defines a force on a joint."""
 
@@ -237,7 +237,7 @@ class Force:
         return self.__type
 
 
-@dataclass(unsafe_hash=True)
+@dataclass
 class Support:
     """
     Defines a support for a joint.
