@@ -114,6 +114,14 @@ class Member:
     joint_a: Joint
     joint_b: Joint
 
+    def __eq__(self, __value: "Member") -> bool:
+        if self.joint_a == __value.joint_a and self.joint_b == __value.joint_b:
+            return True
+        if self.joint_a == __value.joint_b and self.joint_b == __value.joint_a:
+            return True
+
+        return False
+
     def __post_init__(self):
         self.__force: torch.Tensor = torch.tensor(
             0, dtype=torch.float32, device=DEVICE)
@@ -327,15 +335,26 @@ class Mesh:
         return hash(id(self))
 
     def __eq__(self, __value: "Mesh"):
+        """This function doesn't work well"""
+        def are_lists_equal(list1, list2) -> bool:
+            if len(list1) != len(list2):
+                return False
+            count_dict1 = {}
+            count_dict2 = {}
+            for item in list1:
+                count_dict1[item] = count_dict1.get(item, 0) + 1
+            for item in list2:
+                count_dict2[item] = count_dict2.get(item, 0) + 1
+            equal = count_dict1 == count_dict2
+            return equal
         equal = True
-
         if self.joints != __value.joints:
             equal = False
-        elif set(self.supports) != set(__value.supports):
+        elif not are_lists_equal(self.supports, __value.supports):
             equal = False
-        elif set(self.members.values()) != set(__value.members.values()):
+        elif not are_lists_equal(list(self.members.values()), list(__value.members.values())):
             equal = False
-        elif set(self.forces) != set(__value.forces):
+        elif not are_lists_equal(self.forces, __value.forces):
             equal = False
 
         return equal
