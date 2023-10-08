@@ -107,7 +107,7 @@ class Joint:
         return f"({self.x_coordinate}, {self.y_coordinate})"
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class Member:
 
     """Defines a member."""
@@ -157,7 +157,7 @@ class Member:
         return self.__force_type
 
 
-@dataclass(init=False)
+@dataclass(init=False, unsafe_hash=True)
 class Force:
     """Defines a force on a joint."""
 
@@ -194,6 +194,9 @@ class Force:
 
     def __repr__(self) -> str:
         return f"Force(joint={self.__joint}, x_mag={self.__x_component}, y_mag={self.__y_component})"
+
+    def __hash__(self) -> str:
+        return hash(id(self))
 
     @property
     def joint(self):
@@ -234,7 +237,7 @@ class Force:
         return self.__type
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class Support:
     """
     Defines a support for a joint.
@@ -294,6 +297,9 @@ class Support:
         if isinstance(self.base, str):
             self.base = Support.Base.code_to_base(self.base)
 
+    def __hash__(self) -> int:
+        return hash(id(self))
+
 
 class Mesh:
     """
@@ -325,7 +331,7 @@ class Mesh:
 
         if self.joints != __value.joints:
             equal = False
-        elif set(self.supports) != set(__value.joints):
+        elif set(self.supports) != set(__value.supports):
             equal = False
         elif set(self.members.values()) != set(__value.members.values()):
             equal = False
