@@ -886,7 +886,7 @@ For support at {support.joint}:
             max_member_length=None,
             max_tensile_force=None,
             max_compresive_force=1,
-            constriant_agression=10,
+            constriant_agression=10,  # fix spelling
             progress_bar=True,
             show_metrics=True,
             update_metrics_interval=100,
@@ -898,12 +898,13 @@ For support at {support.joint}:
         x_axis = []
         lr_data = []
         cost_data = []
+        self.__epochs = epochs
 
         # set up progress bar
         if progress_bar:
-            epochs = tqdm(range(epochs))
+            self.__epochs = tqdm(range(self.__epochs))
         else:
-            epochs = range(epochs)
+            self.__epochs = range(self.__epochs)
 
         # set up plots
         if show_metrics:
@@ -927,7 +928,7 @@ For support at {support.joint}:
         # set up optimizer
         optim = optimizer(self.parameters(), lr)
         # training loop
-        for epoch in epochs:
+        for epoch in self.__epochs:
 
             # calculate forces and member forces
             self.clear_reactions()
@@ -955,7 +956,7 @@ For support at {support.joint}:
                 # update the progress bar
                 with torch.no_grad():
                     if progress_bar:
-                        epochs.set_postfix({"Cost": cost.data})
+                        self.__epochs.set_postfix({"Cost": cost.data})
 
                 # update the mesh picture
                 if show_at_epoch:
@@ -977,6 +978,9 @@ For support at {support.joint}:
                 if (show_metrics or show_at_epoch):
                     plt.pause(1e-10)
 
+        # delete this attr since it is only needed for the loop
+        del self.__epochs
+
         if (show_metrics or show_at_epoch):
             plt.ioff()
 
@@ -985,3 +989,12 @@ For support at {support.joint}:
     def save(self, name, relative_path):
         with open(str(f"{relative_path}{name}"), "wb") as f:
             pickle.dump(self, f)
+
+    def training_progress_percent(self) -> float:
+        if not hasattr(self, "_Mesh__epochs"):
+            return 0
+        elif isinstance(self.__epochs, tqdm):
+            self.__epochs: tqdm
+            return self.__epochs.n
+        else:
+            return 0
