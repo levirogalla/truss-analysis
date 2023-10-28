@@ -45,6 +45,9 @@ class Joint:
         """Get y coordinate of joint."""
         return self.__vector[1]
 
+    def set_track_grad(self, track_grad: bool):
+        self.__track_grad = track_grad
+
     def set_cordinates(self, cordinates: list[float, float]):
         """Set new cordinate for joint."""
         self.__vector = torch.tensor(
@@ -979,7 +982,7 @@ For support at {support.joint}:
                     plt.pause(1e-10)
 
         # delete this attr since it is only needed for the loop
-        del self.__epochs
+        self.delete_epochs_counter()
 
         if (show_metrics or show_at_epoch):
             plt.ioff()
@@ -990,7 +993,18 @@ For support at {support.joint}:
         with open(str(f"{relative_path}{name}"), "wb") as f:
             pickle.dump(self, f)
 
-    def training_progress_percent(self) -> float:
+    def delete_epochs_counter(self):
+        """
+        Deletes the tqdm instance.
+        It sometimes causes issues with pickling and copying
+
+        """
+        try:
+            del self.__epochs
+        except:
+            print("pytruss- Epochs counter already deleted.")
+
+    def training_progress(self) -> float:
         if not hasattr(self, "_Mesh__epochs"):
             return 0
         elif isinstance(self.__epochs, tqdm):
