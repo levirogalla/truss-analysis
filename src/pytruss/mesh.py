@@ -931,6 +931,8 @@ For support at {support.joint}:
         # set up optimizer
         optim = optimizer(self.parameters(), lr)
         # training loop
+
+        self.__training = True
         for epoch in self.__epochs:
 
             # calculate forces and member forces
@@ -981,13 +983,16 @@ For support at {support.joint}:
                 if (show_metrics or show_at_epoch):
                     plt.pause(1e-10)
 
+            if self.__training == False:
+                break
+
         # delete this attr since it is only needed for the loop
         self.delete_epochs_counter()
 
         if (show_metrics or show_at_epoch):
             plt.ioff()
 
-        print("done")
+        del self.__training
 
     def save(self, name, relative_path):
         with open(str(f"{relative_path}{name}"), "wb") as f:
@@ -1012,3 +1017,10 @@ For support at {support.joint}:
             return self.__epochs.n
         else:
             return 0
+
+    def stop_training(self) -> None:
+        """Stops training."""
+        try:
+            self.__training = False
+        except Exception as e:
+            print("not in training loop.")
