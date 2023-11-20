@@ -375,6 +375,7 @@ class Mesh:
                 yield joint.vector
 
     def delete_joint(self, joint: Joint) -> None:
+        """Deletes a joint in mesh."""
         members_connected_to_joint = [mem for mem in joint.members]
         post_member_index_reduction = 0
         for member, index in self.__members.items():
@@ -385,7 +386,7 @@ class Mesh:
 
         for member in members_connected_to_joint:
             self.__members.pop(member)
-
+            self.__member_count -= 1
             if joint == member.joint_a:
                 member.joint_b._Joint__members.remove(member)
             if joint == member.joint_b:
@@ -398,11 +399,36 @@ class Mesh:
         for i, support in enumerate(self.__supports):
             if support.joint == joint:
                 self.__supports.pop(i)
-        if post_member_index_reduction == 0:
-            raise ValueError(f"{joint} not found")
 
-        self.__member_count -= 1
         self.__joints.remove(joint)
+        del joint
+
+    def delete_force(self, force_to_delete: Force):
+        """Deletes a force."""
+        self.__forces.remove(force_to_delete)
+        force_to_delete.joint._Joint__forces.remove(force_to_delete)
+        del force_to_delete
+
+    def delete_support(self, support_to_delete: Support):
+        """Deletes a support."""
+        self.__supports.remove(support_to_delete)
+        support_to_delete.joint._Joint__support = None
+        del support_to_delete
+
+    def delete_member(self, member_to_delete: Member):
+        """Deletes a member."""
+        post_member_index_reduction = 0
+        for member, index in self.__members.items():
+            member: Member
+            self.__members[member] = index - post_member_index_reduction
+            if member == member_to_delete:
+                post_member_index_reduction = 1
+
+        member_to_delete.joint_b._Joint__members.remove(member_to_delete)
+        member_to_delete.joint_a._Joint__members.remove(member_to_delete)
+
+        self.__members.pop(member_to_delete)
+        self.__member_count -= 1
 
     @property
     def members(self) -> dict[Member: int]:
@@ -428,6 +454,7 @@ class Mesh:
 
     @property
     def supports(self) -> list[Support]:
+        """Get supports"""
         return self.__supports
 
     def add_support(self, support: Support) -> None:
@@ -440,6 +467,9 @@ class Mesh:
 
         if support.joint not in self.__joints:
             raise ValueError(f"{support} joint does not exist in mesh.")
+
+        if support.joint.support is not None:
+            raise ValueError(f"{support.joint} has a support already.")
 
         # adds support to joint
         support.joint.add_support(support)
