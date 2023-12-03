@@ -431,7 +431,11 @@ class Mesh:
         self.__member_count -= 1
 
     def add_joint(self, joint: Joint):
-        """Add a joint to the mesh."""
+        """Add a joint to the mesh. Raises a ValueError if the joint exists already."""
+        if joint in self.__joints:
+            raise ValueError(
+                f"pytruss- Joint at ({joint.x_coordinate}, {joint.y_coordinate}) exists already.")
+
         self.__joints.add(joint)
 
     @property
