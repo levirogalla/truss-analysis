@@ -430,6 +430,10 @@ class Mesh:
         self.__members.pop(member_to_delete)
         self.__member_count -= 1
 
+    def add_joint(self, joint: Joint):
+        """Add a joint to the mesh."""
+        self.__joints.add(joint)
+
     @property
     def members(self) -> dict[Member: int]:
         return self.__members
@@ -1013,7 +1017,7 @@ For support at {support.joint}:
                 if (show_metrics or show_at_epoch):
                     plt.pause(1e-10)
 
-            if self.__training == False:
+            if not self.__training:
                 break
 
         # delete this attr since it is only needed for the loop
@@ -1036,10 +1040,11 @@ For support at {support.joint}:
         """
         try:
             del self.__epochs
-        except:
+        except NameError:
             print("pytruss- Epochs counter already deleted.")
 
     def training_progress(self) -> float:
+        """Get training progresss."""
         if not hasattr(self, "_Mesh__epochs"):
             return 0
         elif isinstance(self.__epochs, tqdm):
