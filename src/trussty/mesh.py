@@ -6,8 +6,6 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from .support_markers import TF, TP, RP, P, F
 from tqdm import tqdm
-from statistics import mean
-from queue import Queue
 import pickle
 
 DEVICE = "cpu"
