@@ -1044,7 +1044,7 @@ For support at {support.joint}:
         """
         try:
             del self.__epochs
-        except NameError:
+        except (NameError, AttributeError):
             print("pytruss- Epochs counter already deleted.")
 
     def training_progress(self) -> float:

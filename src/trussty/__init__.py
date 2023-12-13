@@ -1,2 +1,2 @@
-"""Pytruss."""
+"""Trussty."""
 from .mesh import *

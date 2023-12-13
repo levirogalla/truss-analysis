@@ -1,6 +1,6 @@
 import random
 import numpy as np
-from src.pytruss.mesh import Mesh, Joint, Member, Support, Force
+from src.trussty.mesh import Mesh, Joint, Member, Support, Force
 import math
 
 # plan

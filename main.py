@@ -1,5 +1,5 @@
 """Import mesh classes"""
-from src.pytruss.mesh import Mesh, Joint, Member, Support, Force
+from src.trussty.mesh import Mesh, Joint, Member, Support, Force
 import numpy as np
 from matplotlib import pyplot as plt
 import time

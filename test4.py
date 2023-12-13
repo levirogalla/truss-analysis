@@ -1,4 +1,4 @@
-from pytruss import Mesh, Member, Joint, Force, Support
+from trussty import Mesh, Member, Joint, Force, Support
 import random
 import math
 from matplotlib import pyplot as plt
