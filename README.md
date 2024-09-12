@@ -1,6 +1,6 @@
 # Trussty
 
-Trusty is a Python library for modeling and analyzing trusses using tensors for computational efficiency. It leverages the power of PyTorch for gradient tracking, enabling force and member optimization, and supports structural analysis with joints, members, forces, and supports. This library provides a flexible and intuitive framework to model 2D truss structures and solve for reactions, internal member forces, and optimize truss designs.
+Trusty is a Python library for modeling and analyzing trusses using tensors for computational efficiency. It leverages the power of PyTorch for gradient tracking, enabling force and member optimization, and supports structural analysis with joints, members, forces, and supports. This library provides a flexible and intuitive framework to model 2D truss structures and solve for reactions, internal member forces, and optimize truss designs. Download desktop app [here](https://trussty-web.vercel.app/).
 
 ## Features
 
